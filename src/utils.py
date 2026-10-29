@@ -39,7 +39,7 @@ class OptimalDesignResult:
     duality_gap : float
         Relative Kiefer-Wolfowitz duality gap (max_variance - r) / r >= 0.
     num_iterations : int
-        Number of Frank-Wolfe (Fedorov-Wynn) iterations executed.
+        Number of Frank-Wolfe (Fedorov-Wynn-Atwood) iterations executed.
     """
 
     pi: FloatArray
@@ -119,14 +119,6 @@ def select_well_conditioned_basis(
     from the feature matrix X in R^{k x d} using Column-Pivoted QR factorization
     on X^T in R^{d x k}.
 
-    Mathematical Justification:
-    In Phase 1 of the Robust Linear Bandit (RLB) algorithm (Ghosh et al., 2017, Sec. 4;
-    Section 3.3 of `main.tex`), any test arm x_j outside B is expressed as x_j = X_B c_j
-    where X_B = [x_{b_1} | ... | x_{b_r}] has the basis vectors as columns, and the
-    hypothesis-test threshold w_{tau, j}(delta) scales with sqrt(||c_j||_2^2 + 1)
-    where c_j = X_B^{-1} x_j. Selecting B via pivoted QR maximizes |det(X_B)| and
-    minimizes cond(X_B), keeping ||c_j||_2 small and maximizing test power.
-
     Parameters
     ----------
     X : FloatArray of shape (k, d)
@@ -165,20 +157,21 @@ def compute_g_optimal_design(
     arm_features: FloatArray,
     tol: float = 1e-5,
     max_iter: int = 1000,
-    weight_prune_tol: float = 1e-5,
+    weight_prune_tol: float = 1e-4,
 ) -> OptimalDesignResult:
     """
     Compute an approximate G-optimal design distribution pi in Delta(A_l) over a finite
-    active arm set A_l subset R^d via the Frank-Wolfe (Fedorov-Wynn) algorithm with
-    pivoted-QR support initialization.
+    active arm set A_l subset R^d via the Away-Step Frank-Wolfe (Fedorov-Wynn-Atwood)
+    algorithm initialized strictly on a Column-Pivoted QR basis.
 
     Mathematical Guarantees (Kiefer-Wolfowitz Theorem, Theorem 2.5 in `main.tex`):
     Let V(pi) = sum_{x in A_l} pi(x) x x^T and r = rank(span(A_l)) <= d. Then
         min_{pi in Delta(A_l)} max_{x in A_l} x^T V(pi)^+ x = r <= d.
-    At iteration m with current design pi^{(m)} and worst-case arm x_m^* achieving
-    g_m = max_{x in A_l} x^T V(pi^{(m)})^+ x, maximizing log det_+ V((1-gamma)pi^{(m)} + gamma e_{x_m^*})
-    yields the exact closed-form step size:
-        gamma_m = (g_m / r - 1) / (g_m - 1) in (0, 1).
+    Initializing pi^{(0)} uniformly on the r-element pivoted-QR basis ensures V(pi^{(0)})
+    is full-rank on span(A_l) with compact support |supp(pi^{(0)})| = r. At iteration m,
+    combining Fedorov toward steps (adding weight to j_+ = argmax_i ||x_i||_{V(pi)^+}^2)
+    and Atwood away steps (removing weight from j_- = argmin_{i : pi_i > 0} ||x_i||_{V(pi)^+}^2)
+    achieves fast linear convergence and sparse support |supp(pi)| <= d(d+1)/2.
 
     Parameters
     ----------
@@ -189,7 +182,7 @@ def compute_g_optimal_design(
     max_iter : int
         Maximum number of Frank-Wolfe iterations.
     weight_prune_tol : float
-        Threshold for pruning negligible support weights while preserving g(pi).
+        Threshold for pruning negligible support weights while strictly preserving tol.
 
     Returns
     -------
@@ -214,50 +207,95 @@ def compute_g_optimal_design(
 
     basis_idx, _ = select_well_conditioned_basis(arm_features, tol=1e-8)
     rank_eff = max(1, min(len(basis_idx), d))
+    r_float = float(rank_eff)
 
+    # Project active arms onto the exact r-dimensional orthonormal basis Q of span(A_l)
+    # so that M(pi) = Z^T diag(pi) Z in R^{r x r} is full-rank on R^r.
+    Q_full, _, _ = qr(arm_features.T, mode="economic", pivoting=True)
+    Q_sub: FloatArray = Q_full[:, :rank_eff]
+    Z: FloatArray = arm_features @ Q_sub  # shape (k_active, rank_eff)
+    reg_eye: FloatArray = 1e-12 * np.eye(rank_eff, dtype=np.float64)
+
+    # Initialize strictly on the r-element Pivoted-QR basis (zero mass on interior arms)
     pi = np.zeros(k_active, dtype=np.float64)
-    if len(basis_idx) > 0:
-        pi[basis_idx] = 0.80 / float(len(basis_idx))
-        pi += 0.20 / float(k_active)
+    if basis_idx.size > 0:
+        pi[basis_idx] = 1.0 / float(basis_idx.size)
     else:
         pi.fill(1.0 / float(k_active))
-    pi /= np.sum(pi)
 
-    max_var = float(rank_eff)
+    max_var = r_float
     num_iter = 0
 
     for it in range(1, max_iter + 1):
         num_iter = it
-        V = (arm_features.T * pi) @ arm_features
-        V_pinv = np.linalg.pinv(V, rcond=1e-10, hermitian=True)
-        variances = batch_mahalanobis_norm(arm_features, V_pinv) ** 2
+        M = (Z.T * pi) @ Z + reg_eye
+        M_inv = np.linalg.inv(M)
+        variances = batch_mahalanobis_norm(Z, M_inv) ** 2
 
-        j_max = int(np.argmax(variances))
-        max_var = float(variances[j_max])
+        j_plus = int(np.argmax(variances))
+        g_plus = float(variances[j_plus])
+        max_var = g_plus
 
-        if max_var <= float(rank_eff) * (1.0 + tol) or max_var <= 1.0 + 1e-12:
+        if g_plus <= r_float * (1.0 + tol) or g_plus <= 1.0 + 1e-12:
             break
 
-        step = (max_var / float(rank_eff) - 1.0) / (max_var - 1.0)
-        step = float(np.clip(step, 0.0, 1.0))
+        supp_idx = np.where(pi > 1e-12)[0]
+        took_away_step = False
+        if supp_idx.size > rank_eff:
+            j_minus = int(supp_idx[int(np.argmin(variances[supp_idx]))])
+            g_minus = float(variances[j_minus])
 
-        pi = (1.0 - step) * pi
-        pi[j_max] += step
+            if (
+                (r_float - g_minus) > (g_plus - r_float)
+                and g_minus < r_float - 1e-9
+                and pi[j_minus] < 1.0 - 1e-9
+            ):
+                alpha_max = float(pi[j_minus] / (1.0 - pi[j_minus]))
+                if g_minus <= 1.0 + 1e-9:
+                    step_away = alpha_max
+                else:
+                    step_opt = (r_float - g_minus) / (r_float * (g_minus - 1.0))
+                    step_away = min(alpha_max, float(max(0.0, step_opt)))
+
+                pi_cand = (1.0 + step_away) * pi
+                pi_cand[j_minus] = max(0.0, pi_cand[j_minus] - step_away)
+                pi_cand /= float(np.sum(pi_cand))
+
+                # Accept away step only if M_cand remains full-rank and improves log det(M)
+                M_cand = (Z.T * pi_cand) @ Z + reg_eye
+                sign_cur, logdet_cur = np.linalg.slogdet(M)
+                sign_cand, logdet_cand = np.linalg.slogdet(M_cand)
+                if sign_cand > 0 and sign_cur > 0 and logdet_cand >= logdet_cur - 1e-12:
+                    pi = pi_cand
+                    took_away_step = True
+
+        if not took_away_step:
+            step_toward = (g_plus / r_float - 1.0) / (g_plus - 1.0)
+            step_toward = float(np.clip(step_toward, 0.0, 1.0))
+            pi = (1.0 - step_toward) * pi
+            pi[j_plus] += step_toward
+
+    # Evaluate final variance in R^r and prune negligible weights only if strict tolerance holds
+    M_final = (Z.T * pi) @ Z + reg_eye
+    M_final_inv = np.linalg.inv(M_final)
+    max_var = float(np.max(batch_mahalanobis_norm(Z, M_final_inv) ** 2))
 
     cand_pi = pi.copy()
-    cand_pi[cand_pi < weight_prune_tol / float(k_active)] = 0.0
-    if np.sum(cand_pi) > 0:
-        cand_pi /= np.sum(cand_pi)
-        V_cand = (arm_features.T * cand_pi) @ arm_features
-        V_cand_pinv = np.linalg.pinv(V_cand, rcond=1e-10, hermitian=True)
-        cand_max_var = float(
-            np.max(batch_mahalanobis_norm(arm_features, V_cand_pinv) ** 2)
-        )
-        if cand_max_var <= float(rank_eff) * (1.0 + 5.0 * tol):
-            pi = cand_pi
-            max_var = cand_max_var
+    cand_pi[cand_pi < weight_prune_tol] = 0.0
+    if np.sum(cand_pi) > 0.0:
+        cand_pi /= float(np.sum(cand_pi))
+        M_cand = (Z.T * cand_pi) @ Z + reg_eye
+        sign_cand, _ = np.linalg.slogdet(M_cand)
+        if sign_cand > 0:
+            M_cand_inv = np.linalg.inv(M_cand)
+            cand_max_var = float(
+                np.max(batch_mahalanobis_norm(Z, M_cand_inv) ** 2)
+            )
+            if cand_max_var <= r_float * (1.0 + tol):
+                pi = cand_pi
+                max_var = cand_max_var
 
-    duality_gap = max(0.0, (max_var - float(rank_eff)) / float(rank_eff))
+    duality_gap = max(0.0, (max_var - r_float) / r_float)
     return OptimalDesignResult(
         pi=pi,
         max_variance=max_var,

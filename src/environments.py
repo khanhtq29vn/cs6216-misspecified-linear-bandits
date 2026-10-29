@@ -329,15 +329,23 @@ def make_realizable_env(
     features = np.zeros((k, d), dtype=np.float64)
     features[0] = theta_star.copy()  # Unique optimal arm with <x^*, theta^*> = 1.0
 
-    idx = 1
-    while idx < k:
-        cand = rng.normal(0.0, 1.0, size=d)
-        norm_c = float(np.linalg.norm(cand))
-        if norm_c > 1e-8:
-            cand /= norm_c
-            if float(np.dot(cand, theta_star)) <= 1.0 - min_gap:
-                features[idx] = cand
-                idx += 1
+    # Suboptimal unit-norm arms with <x_i, theta^*> in [0.55, 1.0 - min_gap]
+    # so suboptimality gaps lie in [min_gap, 0.45] while spanning R^d.
+    max_subopt_mean = max(0.20, 1.0 - float(min_gap))
+    min_subopt_mean = min(0.55, max_subopt_mean - 0.10)
+    c1_vals = np.linspace(max_subopt_mean, min_subopt_mean, num=k - 1, dtype=np.float64)
+
+    for idx in range(1, k):
+        c1 = float(c1_vals[idx - 1])
+        perp_radius = float(np.sqrt(max(0.0, 1.0 - c1**2)))
+        while True:
+            raw = rng.normal(0.0, 1.0, size=d)
+            orth = raw - float(np.dot(raw, theta_star)) * theta_star
+            norm_orth = float(np.linalg.norm(orth))
+            if norm_orth > 1e-8:
+                orth /= norm_orth
+                break
+        features[idx] = c1 * theta_star + perp_radius * orth
 
     if permute_arms:
         perm = rng.permutation(k)
@@ -450,11 +458,12 @@ def make_gap_adjusted_env(
     Exact Algebraic Construction:
     - Reference parameter w^* = e_1 in R^d (||w^*||_2 = 1), optimal action x^* = w^*
       with f_0(x^*) = <x^*, w^*> = f^* = 1.0 (so eps(x^*) = 0).
-    - Suboptimal basis arms j in {1, ..., d-1} have <x_j, w^*> = -31/60 = -0.5167
-      (linear gap Delta_j^{lin} = 91/60) and orthogonal unit components along e_{j+1}.
-      At rho = 0.30 with s_j = +1, their misspecification is:
-          |eps_j| = 0.30 * (91/60) / (1 + 0.30) = 0.3500 (exact match to Section 5.1!).
-    - Remaining arms span linear inner products <x_i, w^*> in [-0.45, 0.84].
+    - Far-from-optimal basis arm x_1 = c_1 e_1 + sqrt(1 - c_1^2) e_2 with c_1 = -31/60 = -0.5167
+      (linear gap Delta_1^{lin} = 91/60) and diagnostic companion arm x_2 = -0.30 e_1 - sqrt(1 - 0.30^2) e_2.
+      At rho = 0.30 with s_1 = +1, the global sup-norm misspecification is:
+          ||eps||_inf = |eps_1| = 0.30 * (91/60) / (1 + 0.30) = 0.3500 (exact match to Section 5.1!).
+    - Remaining basis arms span e_3, ..., e_d and grid arms span <x_i, w^*> in [-0.40, 0.74]
+      within span(e_1, e_3, ..., e_d).
     - For every suboptimal arm i >= 1 with linear gap Delta_i^{lin} = f^* - <x_i, w^*> > 0
       and sign s_i in {-1, +1}, we set:
           Delta_i = Delta_i^{lin} / (1 + s_i * rho),     f_0(x_i) = f^* - Delta_i.
@@ -474,23 +483,45 @@ def make_gap_adjusted_env(
     features = np.zeros((k, d), dtype=np.float64)
     features[0] = w_star.copy()  # Unique optimal arm x^* = w^*
 
-    # Full-rank basis arms with <x_j, w^*> = -31/60 so |eps_j| = 0.3500 at rho = 0.30
-    basis_c1 = -31.0 / 60.0
-    for j in range(1, d):
-        vec = np.zeros(d, dtype=np.float64)
-        vec[0] = basis_c1
-        vec[j] = np.sqrt(1.0 - basis_c1**2)
-        features[j] = vec
+    # Arm 1: Basis arm along +e_2 with <x_1, w^*> = -31/60 so |eps_1| = 0.3500 at rho = 0.30
+    c1_max_err = -31.0 / 60.0
+    features[1, 0] = c1_max_err
+    features[1, 1] = float(np.sqrt(1.0 - c1_max_err**2))
 
-    # Grid of suboptimal arms covering <x_i, w^*> in [-0.45, 0.84]
-    c1_grid = np.linspace(0.84, -0.45, k - d, dtype=np.float64)
+    # Arm 2: Companion arm along -e_2 with large basis coordinate norm so RLB Phase-1 tests e_2
+    c1_comp = -0.30
+    features[2, 0] = c1_comp
+    features[2, 1] = -float(np.sqrt(1.0 - c1_comp**2))
+
+    arm_ptr = 3
+    # Basis arms for remaining coordinates j = 2, ..., d-1 (e_3, ..., e_d)
+    c1_rem_basis = 0.35
+    perp_rem_basis = float(np.sqrt(1.0 - c1_rem_basis**2))
+    for j in range(2, d):
+        if arm_ptr < k - 1:
+            features[arm_ptr, 0] = c1_rem_basis
+            features[arm_ptr, j] = perp_rem_basis
+            arm_ptr += 1
+        if arm_ptr < k - 1:
+            features[arm_ptr, 0] = c1_rem_basis
+            features[arm_ptr, j] = -perp_rem_basis
+            arm_ptr += 1
+
+    num_basis_arms = arm_ptr
+    num_grid = k - num_basis_arms
+
+    # Grid of suboptimal arms covering <x_i, w^*> in [-0.40, 0.74] in span(e_1, e_3, ..., e_d)
+    c1_grid = np.linspace(0.74, -0.40, num_grid, dtype=np.float64)
     for offset, c1 in enumerate(c1_grid):
-        arm_idx = d + offset
-        perp = rng.normal(0.0, 1.0, size=d - 1)
-        perp /= float(np.linalg.norm(perp))
-        rad = np.sqrt(max(0.0, 1.0 - float(c1) ** 2))
+        arm_idx = num_basis_arms + offset
+        rad = float(np.sqrt(max(0.0, 1.0 - float(c1) ** 2)))
         features[arm_idx, 0] = c1
-        features[arm_idx, 1:] = rad * perp
+        if d > 2:
+            perp = rng.normal(0.0, 1.0, size=d - 2)
+            perp /= float(np.linalg.norm(perp))
+            features[arm_idx, 2:] = rad * perp
+        else:
+            features[arm_idx, 1] = rad
 
     linear_means = features @ w_star
     f_star = float(linear_means[0])  # 1.0
@@ -498,18 +529,16 @@ def make_gap_adjusted_env(
 
     misspecification = np.zeros(k, dtype=np.float64)
     for i in range(1, k):
-        if i < d:
+        if i in (1, 2):
+            s_i = 1.0
+        elif float(linear_gaps[i]) > 0.75:
+            # Ensure |eps_i| <= 0.3500 so ||eps||_inf is attained exactly at Arm 1 (0.3500)
             s_i = 1.0
         elif skew_suboptimal_bias:
-            # Coherent directional bias along coordinate 2: tests adaptive Gram-matrix skew
-            # in LinUCB vs. fixed-design Kiefer-Wolfowitz balance in Phased Elimination
-            s_i = 1.0 if features[i, 1] >= 0.0 else -1.0
+            coord_idx = 2 if d > 2 else 1
+            s_i = 1.0 if features[i, coord_idx] >= 0.0 else -1.0
         else:
-            # Use s_i = +1 on deep suboptimal arms (c1 < 0.25) so global ||eps||_inf = 0.3500
-            if features[i, 0] < 0.25:
-                s_i = 1.0
-            else:
-                s_i = 1.0 if (i % 2 == 1) else -1.0
+            s_i = 1.0 if (i % 2 == 1) else -1.0
 
         true_gap_i = float(linear_gaps[i]) / (1.0 + s_i * rho)
         true_mean_i = f_star - true_gap_i

@@ -19,6 +19,13 @@ from src.environments import (
     make_ghosh_sparse_misspecified_env,
     make_realizable_env,
 )
+from src.algorithms import (
+    BanditPolicy,
+    LinUCB,
+    PhasedEliminationBandit,
+    RobustLinearBanditRLB,
+    StandardUCB,
+)
 
 __all__ = [
     "FloatArray",
@@ -33,4 +40,9 @@ __all__ = [
     "make_realizable_env",
     "make_ghosh_sparse_misspecified_env",
     "make_gap_adjusted_env",
+    "BanditPolicy",
+    "StandardUCB",
+    "LinUCB",
+    "RobustLinearBanditRLB",
+    "PhasedEliminationBandit",
 ]
