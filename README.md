@@ -10,7 +10,7 @@
 
 This repository contains the reproducible Python simulation framework, mathematical unit test suite, Monte Carlo experimental benchmarks, and LaTeX lecture notes (`notes/main.tex` and `notes/slides.tex`) for **Group 13a**'s project on **Contextual and Linear Bandits under Model Misspecification**.
 
-We investigate both theoretically and empirically how stochastic linear bandit algorithms behave when the classical linear realizability assumption $f_0(\mathbf{x}) = \langle \mathbf{x}, \boldsymbol{\theta}^* \rangle$ is violated across three distinct regimes:
+We investigate both theoretically and empirically how stochastic linear bandit algorithms behave when the classical linear realizability assumption $f_{0}(\mathbf{x}) = \langle \mathbf{x}, \mathbf{\theta}^* \rangle$ is violated across three distinct regimes:
 
 1. **Regime 1 — Exact Realizability ($\varepsilon \equiv 0$, Section 2):**  Classical stochastic linear bandits where **LinUCB / OFUL** achieves $`\tilde{\mathcal{O}}(d\sqrt{n})`$ cumulative regret and **$G$-Optimal Phased Elimination** achieves $`\tilde{\mathcal{O}}(\sqrt{dn})`$, outperforming unstructured **Standard UCB** ($`\tilde{\mathcal{O}}(\sqrt{kn})`$) when $d \ll k$ ([Li et al., 2010](https://arxiv.org/abs/1003.0146); [Abbasi-Yadkori et al., 2011](https://papers.nips.cc/paper/2011/hash/e1d5be1c7f2f456670de3d53c7b54f4a-Abstract.html)).
 
@@ -44,10 +44,22 @@ cs6216-misspecified-linear-bandits/
 ```
 
 ---
+### 3. Summary of Verified Empirical Results (n = 6,000, 20 Seeds, Mean ± SE)
 
-## 3. Reproducibility & Execution Commands
+| Algorithm | Regime 1: Realizable<br>(ε = 0, k = 50) | Regime 2: Ghosh Sparse<br>(ε_k = 0.45, k = 20) | Regime 3: Liu ρ-GAM<br>(ρ = 0.30, k = 40) |
+| :--- | :---: | :---: | :---: |
+| **Standard UCB** (Unstructured) | 174.7 ± 3.4 | 44.0 ± 0.9 | 81.8 ± 1.1 |
+| **LinUCB / OFUL** | 46.9 ± 1.2 | 1432.6 ± 0.7 | 14.8 ± 0.5 |
+| **RLB** (Ghosh et al., 2017) | 60.6 ± 1.0 (0% rej.) | 103.2 ± 0.7 (100% rej.) | 170.1 ± 1.9 (100% rej.) |
+| **Phased Elimination** (G-Optimal) | 68.3 ± 2.5 | 812.1 ± 159.3 | 35.2 ± 2.7 |
 
-### 3.1. Environment Setup (macOS / Linux)
+
+
+---
+
+## 4. Reproducibility & Execution Commands
+
+### 4.1. Environment Setup (macOS / Linux)
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
@@ -55,13 +67,13 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 3.2. Run Mathematical Unit Tests & Fast Verification
+### 4.2. Run Mathematical Unit Tests & Fast Verification
 ```bash
 python -m unittest discover -s tests -v
 python verify_setup.py
 ```
 
-### 3.3. Run Full 20-Seed Monte Carlo Benchmarks & Export Figures
+### 4.3. Run Full 20-Seed Monte Carlo Benchmarks & Export Figures
 ```bash
 python -m experiments.run_experiments
 python -m experiments.plot_results
