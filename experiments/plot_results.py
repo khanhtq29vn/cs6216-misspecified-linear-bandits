@@ -25,7 +25,6 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
 
-# High-contrast, colorblind-safe Okabe-Ito academic palette
 ALG_STYLES: Dict[str, Dict[str, object]] = {
     "Standard UCB": {
         "color": "#7F7F7F",
@@ -39,7 +38,7 @@ ALG_STYLES: Dict[str, Dict[str, object]] = {
         "linestyle": "-",
         "marker": "o",
         "linewidth": 2.3,
-        "label": "LinUCB / OFUL (Unmodified)",
+        "label": "LinUCB / OFUL",
     },
     "RLB (Ghosh et al. 2017)": {
         "color": "#0072B2",
@@ -53,15 +52,12 @@ ALG_STYLES: Dict[str, Dict[str, object]] = {
         "linestyle": "-",
         "marker": "D",
         "linewidth": 2.3,
-        "label": "Phased Elimination (Liu et al., 2025)",
+        "label": "Phased Elimination (G-Optimal)",
     },
 }
 
 
 def configure_matplotlib_style() -> None:
-    """
-    Configure Matplotlib rcParams for crisp vector PDF output matching LaTeX typography.
-    """
     plt.rcParams.update(
         {
             "font.family": "serif",
@@ -84,10 +80,6 @@ def configure_matplotlib_style() -> None:
 
 
 def add_shared_top_legend(fig: plt.Figure) -> None:
-    """
-    Place a clean, single-row or two-row shared algorithm legend strictly ABOVE
-    both subplots so that no legend box ever overlaps data trajectories inside the axes.
-    """
     handles: List[Line2D] = []
     labels: List[str] = []
     for style in ALG_STYLES.values():
@@ -132,7 +124,6 @@ def plot_figure1_realizable(data: np.lib.npyio.NpzFile) -> None:
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.4, 4.1))
     t_grid = data["t_grid"]
 
-    # Panel (a): Cumulative Regret Trajectories
     max_y1 = 0.0
     for name, style in ALG_STYLES.items():
         mean = data[f"exp1_traj_{name}_mean"]
@@ -155,7 +146,6 @@ def plot_figure1_realizable(data: np.lib.npyio.NpzFile) -> None:
     ax1.set_xlim(0, t_grid[-1])
     ax1.set_ylim(0, max_y1 * 1.12)
 
-    # Panel (b): Scaling across Arm Count k
     k_grid = data["exp1_k_grid"]
     max_y2 = 0.0
     for name, style in ALG_STYLES.items():
@@ -180,13 +170,12 @@ def plot_figure1_realizable(data: np.lib.npyio.NpzFile) -> None:
     ax2.set_xlabel("Number of Actions $k$")
     ax2.set_ylabel("Final Cumulative Regret $R_n$")
     ax2.set_xlim(0, 210)
-    ax2.set_ylim(0, max_y2 * 1.18)
+    ax2.set_ylim(0, max_y2 * 1.38)
 
-    # Place annotation in the guaranteed empty upper-left region above flat linear curves
     ucb_k150 = float(data["exp1_ksweep_Standard UCB_mean"][-2])
     ax2.annotate(
-        "Unstructured UCB scales as $\\tilde{\\mathcal{O}}(\\sqrt{kn})$\n"
-        "Linear methods stay $k$-independent $\\tilde{\\mathcal{O}}(d\\sqrt{n})$",
+        "Unstructured UCB grows with action count $k$\n"
+        "Structured linear learners remain $k$-invariant",
         xy=(150, ucb_k150),
         xytext=(14, max_y2 * 0.84),
         arrowprops=dict(
@@ -208,7 +197,6 @@ def plot_figure2_ghosh_sparse(data: np.lib.npyio.NpzFile) -> None:
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.4, 4.1))
     t_grid = data["t_grid"]
 
-    # Panel (a): Cumulative Regret under Sparse Misspecification
     max_y1 = 0.0
     for name, style in ALG_STYLES.items():
         mean = data[f"exp2_traj_{name}_mean"]
@@ -242,14 +230,13 @@ def plot_figure2_ghosh_sparse(data: np.lib.npyio.NpzFile) -> None:
     ax1.set_xlim(0, t_grid[-1])
     ax1.set_ylim(0, max_y1 * 1.12)
 
-    # Panel (b): Phase Transition across Sparse Deviation eps_k
     eps_grid = data["exp2_eps_grid"]
     span_patch = ax2.axvspan(
         0.215,
         0.52,
         color="#FADBD8",
         alpha=0.30,
-        label="Arm $k$ Optimal ($\\varepsilon_k > 0.215$)",
+        label="Corrupted Arm Optimal ($\\varepsilon_k > 0.215$)",
     )
     max_y2 = 0.0
     for name, style in ALG_STYLES.items():
@@ -271,12 +258,11 @@ def plot_figure2_ghosh_sparse(data: np.lib.npyio.NpzFile) -> None:
     ax2.set_title(
         "(b) Breakdown of LinUCB vs. RLB Recovery ($n = 4{,}000$)"
     )
-    ax2.set_xlabel("Sparse Deviation Magnitude $\\varepsilon_k$ on Optimal Arm")
+    ax2.set_xlabel("Sparse Deviation Magnitude $\\varepsilon_k$ on Corrupted Arm")
     ax2.set_ylabel("Final Cumulative Regret $R_n$")
     ax2.set_xlim(-0.01, 0.515)
     ax2.set_ylim(0, max_y2 * 1.24)
 
-    # Twin axis showing RLB Hypothesis Test Power
     ax2_twin = ax2.twinx()
     ax2_twin.spines["top"].set_visible(False)
     ax2_twin.spines["right"].set_visible(True)
@@ -294,7 +280,6 @@ def plot_figure2_ghosh_sparse(data: np.lib.npyio.NpzFile) -> None:
     ax2_twin.set_ylim(-5, 118)
     ax2_twin.grid(False)
 
-    # Compact 2-item legend in upper-left where eps_k in [0, 0.20] has near-zero regret
     ax2.legend(
         handles=[span_patch, rej_line],
         loc="upper left",
@@ -312,7 +297,6 @@ def plot_figure3_liu_gam(data: np.lib.npyio.NpzFile) -> None:
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.4, 4.1))
     t_grid = data["t_grid"]
 
-    # Panel (a): Cumulative Regret under rho-GAM (rho = 0.30)
     max_y1 = 0.0
     for name, style in ALG_STYLES.items():
         mean = data[f"exp3_traj_{name}_mean"]
@@ -337,7 +321,6 @@ def plot_figure3_liu_gam(data: np.lib.npyio.NpzFile) -> None:
     ax1.set_xlim(0, t_grid[-1])
     ax1.set_ylim(0, max_y1 * 1.14)
 
-    # Panel (b): Final Regret across rho in [0.05, 0.60]
     rho_grid = data["exp3_rho_grid"]
     max_y2 = 0.0
     for name, style in ALG_STYLES.items():
@@ -357,29 +340,29 @@ def plot_figure3_liu_gam(data: np.lib.npyio.NpzFile) -> None:
         )
 
     ax2.set_title(
-        "(b) Robustness Across $\\rho$-GAM Ratio ($n = 4{,}000,\\; k=40,\\; d=5$)"
+        "(b) Empirical Behavior Across $\\rho$-GAM Ratio ($n = 4{,}000,\\; k=40,\\; d=5$)"
     )
     ax2.set_xlabel("Gap-Adjusted Misspecification Parameter $\\rho$")
     ax2.set_ylabel("Final Cumulative Regret $R_n$")
     ax2.set_xlim(0.02, 0.63)
-    ax2.set_ylim(0, max_y2 * 1.28)
+    ax2.set_ylim(0, max_y2 * 1.38)
 
-    # Place callout strictly in the top headroom band (y = 1.05 * max_y2) above all curves
     pe_val = float(
-        data["exp3_sweep_Phased Elimination (Liu et al. 2025)_mean"][-2]
+        data["exp3_sweep_Phased Elimination (Liu et al. 2025)_mean"][4]
     )
     ax2.annotate(
-        "Phased Elimination ($G$-optimal design)\nremains flat & robust at large $\\rho = \\mathcal{O}(1/\\sqrt{d})$",
-        xy=(0.52, pe_val),
-        xytext=(0.05, max_y2 * 1.04),
+        "LinUCB & Phased Elimination stay sublinear\n"
+        "despite large global $\\|\\boldsymbol{\\varepsilon}\\|_\\infty$ under $\\rho$-GAM",
+        xy=(float(rho_grid[4]), pe_val),
+        xytext=(0.04, max_y2 * 1.15),
         arrowprops=dict(
             arrowstyle="->",
             color="#009E73",
             lw=1.2,
-            connectionstyle="arc3,rad=-0.15",
+            connectionstyle="arc3,rad=-0.12",
         ),
-        fontsize=8.3,
-        bbox=dict(boxstyle="round,pad=0.30", fc="#E8F8F5", ec="#009E73", alpha=0.95),
+        fontsize=8.2,
+        bbox=dict(boxstyle="round,pad=0.32", fc="#E8F8F5", ec="#009E73", alpha=0.95),
     )
 
     add_shared_top_legend(fig)
@@ -390,7 +373,6 @@ def plot_figure3_liu_gam(data: np.lib.npyio.NpzFile) -> None:
 def plot_figure4_structural_diagnostics(data: np.lib.npyio.NpzFile) -> None:
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.4, 4.3))
 
-    # Panel (a): Geometric Comparison of rho-GAM Cone vs Uniform l_inf Tube
     lin_val_grid = data["diag_lin_val_grid"]
     upper_cone = data["diag_gam_upper_cone"]
     lower_cone = data["diag_gam_lower_cone"]
@@ -454,11 +436,9 @@ def plot_figure4_structural_diagnostics(data: np.lib.npyio.NpzFile) -> None:
     )
     ax1.set_ylabel("True Expected Reward $f_0(\\mathbf{x}_i)$")
     ax1.set_xlim(-0.56, 1.08)
-    # Generous top headroom [-0.85, 1.72] guarantees upper-left is 100% empty for legend
     ax1.set_ylim(-0.85, 1.72)
     ax1.legend(loc="upper left", frameon=True, framealpha=0.94, fontsize=7.9)
 
-    # Panel (b): Subspace Extrapolation Collapse of LinUCB UCB_k(t)
     t_trace = data["diag_t_trace"]
     ucb_arm0 = data["diag_ucb_arm0"]
     ucb_opt = data["diag_ucb_opt"]
@@ -519,25 +499,36 @@ def plot_figure4_structural_diagnostics(data: np.lib.npyio.NpzFile) -> None:
     ax2.set_xlabel("Round $t$")
     ax2.set_ylabel("Reward / Upper Confidence Index")
     ax2.set_xlim(1, len(t_trace))
-    # Set ylim [0.24, 1.55] so top band [1.02, 1.52] and bottom band [0.25, 0.45] are empty
-    ax2.set_ylim(0.24, 1.55)
+    ax2.set_ylim(0.24, 1.58)
 
-    cross_idx = int(np.argmax(ucb_opt < true_arm0))
-    if cross_idx <= 0:
-        cross_idx = 300
+    above_indices = np.flatnonzero(ucb_opt >= true_arm0)
+    if above_indices.size > 0 and int(above_indices[-1]) + 1 < len(t_trace):
+        cross_idx = int(above_indices[-1]) + 1
+    else:
+        below_indices = np.flatnonzero(ucb_opt < true_arm0)
+        cross_idx = int(below_indices[min(120, below_indices.size - 1)])
+
+    cross_round = int(t_trace[cross_idx])
+    cross_y = float(ucb_opt[cross_idx])
+    ax2.scatter([cross_round], [cross_y], color="#D91E18", s=42, zorder=6)
     ax2.annotate(
-        "$\\mathrm{UCB}_k(t) < \\mu_1$: LinUCB abandons\noptimal Arm $k$ permanently!",
-        xy=(cross_idx, float(ucb_opt[cross_idx])),
-        xytext=(420, 0.28),
+        f"$\\mathrm{{UCB}}_k(t) < \\mu_1$ ($t = {cross_round}$):\n"
+        "Basis Arm 1 pulls shrink $\\|\\mathbf{x}_k\\|_{V_{t-1}^{-1}}$\n"
+        "around $\\mu_k^{\\mathrm{lin}} = 0.485$, locking out Arm $k$",
+        xy=(cross_round, cross_y),
+        xytext=(380, 0.27),
         arrowprops=dict(
             arrowstyle="->",
-            color="#0072B2",
-            lw=1.2,
+            color="#D91E18",
+            lw=1.3,
             connectionstyle="arc3,rad=-0.15",
         ),
-        fontsize=8.2,
-        bbox=dict(boxstyle="round,pad=0.28", fc="#EBF5FB", ec="#0072B2", alpha=0.95),
+        fontsize=8.0,
+        bbox=dict(
+            boxstyle="round,pad=0.28", fc="#FDEDEC", ec="#D91E18", alpha=0.95
+        ),
     )
+
     ax2.legend(
         loc="upper right",
         ncol=2,

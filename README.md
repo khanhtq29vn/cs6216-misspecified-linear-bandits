@@ -23,24 +23,24 @@ We investigate both theoretically and empirically how stochastic linear bandit a
 
 ```text
 cs6216-misspecified-linear-bandits/
-├── README.md                      # Project documentation and reproducibility guide
-├── requirements.txt               # Python scientific computing dependencies
-├── verify_setup.py                # Fast end-to-end verification across all 3 regimes
 ├── src/
-│   ├── __init__.py                # Package exports
-│   ├── utils.py                   # Sherman-Morrison updates, Pivoted-QR basis & Frank-Wolfe G-optimal design
-│   ├── environments.py            # Self-verifying Realizable, Ghosh Sparse, and Liu rho-GAM environments
-│   └── algorithms.py              # StandardUCB, LinUCB, RobustLinearBanditRLB, PhasedEliminationBandit
+│   ├── __init__.py          # Package exports
+│   ├── utils.py             # Sherman-Morrison O(d^2) updates, Pivoted-QR basis selection,
+│   │                        # and whitened Away-Step Frank-Wolfe G-optimal design solver
+│   ├── environments.py      # Self-verifying bandit environments (Realizable, Ghosh Sparse, Liu rho-GAM)
+│   └── algorithms.py        # StandardUCB, LinUCB, RobustLinearBanditRLB, PhasedEliminationBandit
 ├── tests/
-│   └── test_bandits.py            # Automated unittest suite verifying all mathematical lemmas & theorems
+│   └── test_bandits.py      # 12 unit & regression tests (including technical audit invariants)
 ├── experiments/
 │   ├── __init__.py
-│   ├── run_experiments.py         # Multi-seed Monte Carlo simulation runner & LaTeX table exporter
-│   └── plot_results.py            # Publication-quality vector PDF figure generator
-├── figures/                       # Generated vector PDF plots included in `main.tex` and `slides.tex`
-└── notes/
-    ├── main.tex                   # CS6216 Lecture Notes LaTeX source (8-12 pages)
-    └── slides.tex                 # CS6216 Presentation Slides LaTeX Beamer source (16:9)
+│   ├── run_experiments.py   # Multi-seed Monte Carlo runner (20 main seeds, 15 sweep seeds)
+│   ├── plot_results.py      # Publication-grade vector PDF/PNG figure generator
+│   ├── results_summary.npz  # Compressed numerical arrays and per-seed trajectories
+│   └── table_results.tex    # Auto-generated LaTeX booktabs summary table
+├── figures/                 # Vector PDF and 300-DPI PNG figures (fig1 to fig4)
+├── verify_setup.py          # Deterministic end-to-end mathematical & numerical verification
+├── requirements.txt         # Pinned scientific Python dependencies
+└── README.md                # Project documentation and reproducibility guide
 ```
 
 ---
