@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use the simulation code, cite this repository and the original algorithm papers."
+title: "Contextual and Linear Bandits under Model Misspecification: Synthetic Benchmarks"
+type: software
+authors:
+  - family-names: "Tran"
+    given-names: "Quoc Khanh"
+  - family-names: "Aitymbetov"
+    given-names: "Nurmukhammed"
+repository-code: "https://github.com/khanhtq29vn/cs6216-misspecified-linear-bandits"
+license: MIT

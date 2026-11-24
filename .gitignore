@@ -218,3 +218,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+# Generated active experiments (archived baseline remains versioned)
+experiments/quick/
+experiments/results_summary.npz
+experiments/table_results.tex
+figures/*.pdf
+figures/*.png
+experiments/main_only/
+experiments/runs/
+figures/quick/
+figures/runs/

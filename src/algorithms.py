@@ -1,16 +1,15 @@
 """
 Bandit Policies for Realizable and Misspecified Stochastic Linear Bandits.
 
-Implements the four algorithms analyzed in Sections 2, 3, 4, and 5 of our
-CS6216 Lecture Notes (`main.tex`):
+Finite-action stochastic bandit policies used in the numerical experiments.
 1. `StandardUCB`: Unstructured k-armed Upper Confidence Bound policy
    (Lattimore & Szepesvari, 2020, Chapter 7).
-2. `LinUCB`: Optimism in the Face of Uncertainty for Linear Bandits (OFUL)
-   (Li et al., 2010; Abbasi-Yadkori et al., 2011, Theorems 2-3; Theorem 2.1 & Theorem 2.4).
-3. `RobustLinearBanditRLB`: Two-phase Subspace Linearity Hypothesis-Testing Bandit
-   (Ghosh, Chowdhury, & Gopalan, AAAI 2017, Algorithm 1 & Theorem 3; Section 3.3 & Theorem 3.3).
-4. `PhasedEliminationBandit`: Kiefer-Wolfowitz G-Optimal Design Phased Elimination
-   (Lattimore & Szepesvari, 2020, Chapter 21; Liu et al., 2025, Algorithm 2 & Theorem 16).
+2. `LinUCB`: Shared-parameter linear optimism with a configurable radius
+   (related to OFUL; see Abbasi-Yadkori et al., 2011).
+3. `RobustLinearBanditRLB`: Fixed-basis diagnostic screening followed by
+   a linear or unstructured policy; not the randomized RLB of Ghosh et al.
+4. `PhasedEliminationBandit`: Phase-local G-optimal design elimination with
+   configurable empirical thresholds; not a theorem-calibrated implementation.
 """
 
 from __future__ import annotations
@@ -118,7 +117,10 @@ class StandardUCB(BanditPolicy):
 
 class LinUCB(BanditPolicy):
     """
-    LinUCB / OFUL (Optimism in the Face of Uncertainty for Linear Bandits).
+    Shared-feature optimistic linear bandit with configurable confidence scale.
+
+    Only confidence_scale=1 uses the displayed self-normalized radius directly;
+    smaller values are experimental tuning choices, not theorems.
     """
 
     def __init__(
@@ -175,7 +177,7 @@ class LinUCB(BanditPolicy):
 
     @property
     def name(self) -> str:
-        return "LinUCB (OFUL)"
+        return "LinUCB (scaled OFUL)"
 
     def reset(self) -> None:
         self.V_inv = (1.0 / self.reg_lambda) * np.eye(self.d, dtype=np.float64)
@@ -185,10 +187,7 @@ class LinUCB(BanditPolicy):
         self.t = 0
 
     def confidence_radius(self, t: int) -> float:
-        """
-        Compute the self-normalized confidence ellipsoid radius sqrt(beta_t) at the
-        start of round t (after n_obs = max(self.num_observations, t - 1) observations).
-        """
+        """Compute the scaled self-normalized radius after observed samples."""
         n_obs = max(self.num_observations, max(0, int(t) - 1))
         log_det_bound = self.d * np.log(
             1.0 + (float(n_obs) * (self.L**2)) / (self.reg_lambda * float(self.d))
@@ -226,20 +225,12 @@ class LinUCB(BanditPolicy):
 
 
 class RobustLinearBanditRLB(BanditPolicy):
-    """
-    Robust Linear Bandit (RLB) via Subspace Linearity Hypothesis Testing
-    (Ghosh, Chowdhury, & Gopalan, AAAI 2017, Algorithm 1 & Theorem 3;
-    Section 3.3, Algorithm 3, Theorem 3.3, and Remark 3.4 in `main.tex`).
+    """Finite-arm basis-screening policy inspired by Ghosh et al. (2017).
 
-    Key Synchronization & Calibration Properties:
-    - Uses the exact same `confidence_scale` (default `0.60`) for its internal
-      warm-started `LinUCB` instance as standalone `LinUCB`, ensuring that under H_0
-      (Realizable Regime 1), RLB's post-Phase-1 trajectory has the exact same slope
-      as standalone `LinUCB`!
-    - Uses high-probability test significance `test_delta = 0.005` (matching Theorem 3.3's
-      delta_test = O(1/n) scaling) so that false rejections under H_0 are 0% across all
-      action-space sizes k in {10, ..., 200}, while maintaining 100% power under H_1
-      whenever eps_k > 0.25!
+    Tests a limited collection of diagnostic arms after fixed sampling, then
+    uses an OFUL-style or unstructured UCB learner. A passed test does *not*
+    certify global linearity. The original RLB theorem requires random test
+    coverage and a non-sparse-deviation assumption not enforced here.
     """
 
     def __init__(
@@ -350,7 +341,7 @@ class RobustLinearBanditRLB(BanditPolicy):
 
     @property
     def name(self) -> str:
-        return "RLB (Ghosh et al. 2017)"
+        return "Basis-test RLB variant"
 
     def reset(self) -> None:
         self.t = 0
@@ -436,9 +427,17 @@ class RobustLinearBanditRLB(BanditPolicy):
 
 
 class PhasedEliminationBandit(BanditPolicy):
-    """
-    Kiefer-Wolfowitz G-Optimal Design Phased Elimination for Linear Bandits
-    (Lattimore & Szepesvari, 2020, Chapter 21; Liu et al., 2025, Algorithm 2 & Theorem 16).
+    """Finite-arm, phase-local, G-optimal-design elimination policy.
+
+    Each phase obtains a fresh G-optimal design on the current active set,
+    samples its support, and fits ordinary least squares using observations
+    **from that phase only**. Earlier phase data never enters the estimator.
+
+    The default threshold multiplier and sample schedule are calibrated for
+    numerical study; these are not identical to Algorithm 2 or Theorem 16 of
+    Liu et al. (2025). Set ``elimination_multiplier=16`` for a more conservative
+    rule, but that setting alone does not reproduce the paper's theorem:
+    its sample schedule and confidence convention must also be matched.
     """
 
     def __init__(
@@ -448,167 +447,167 @@ class PhasedEliminationBandit(BanditPolicy):
         delta: float = 0.05,
         phase_scale: float = 0.12,
         eps_init: float = 0.25,
+        elimination_multiplier: float = 2.0,
     ) -> None:
-        X_arr = np.asarray(features, dtype=np.float64)
-        if X_arr.ndim != 2 or X_arr.shape[0] == 0 or X_arr.shape[1] == 0:
-            raise ValueError(
-                f"features must be a non-empty 2D array, got shape {X_arr.shape}."
-            )
-        if not np.all(np.isfinite(X_arr)):
-            raise ValueError("features must contain only finite entries.")
-        if not np.isfinite(sigma) or sigma < 0.0:
-            raise ValueError(f"sigma must be finite and >= 0, got {sigma}.")
-        if not np.isfinite(delta) or not (0.0 < delta < 1.0):
-            raise ValueError(f"delta must lie in (0, 1), got {delta}.")
-        if not np.isfinite(phase_scale) or phase_scale <= 0.0:
-            raise ValueError(f"phase_scale must be finite and > 0, got {phase_scale}.")
-        if not np.isfinite(eps_init) or eps_init <= 0.0:
-            raise ValueError(f"eps_init must be finite and > 0, got {eps_init}.")
-
-        self.features: FloatArray = np.array(X_arr, dtype=np.float64, copy=True)
+        X = np.asarray(features, dtype=np.float64)
+        if X.ndim != 2 or 0 in X.shape or not np.all(np.isfinite(X)):
+            raise ValueError("features must be a nonempty finite 2D matrix")
+        if not np.isfinite(sigma) or sigma < 0:
+            raise ValueError("sigma must be finite and nonnegative")
+        if not np.isfinite(delta) or not 0 < delta < 1:
+            raise ValueError("delta must be in (0, 1)")
+        if not np.isfinite(phase_scale) or phase_scale <= 0:
+            raise ValueError("phase_scale must be positive and finite")
+        if not np.isfinite(eps_init) or eps_init <= 0:
+            raise ValueError("eps_init must be positive and finite")
+        if not np.isfinite(elimination_multiplier) or elimination_multiplier <= 0:
+            raise ValueError("elimination_multiplier must be positive and finite")
+        self.features: FloatArray = X.copy()
+        self.features.setflags(write=False)
         self.k, self.d = self.features.shape
-        self.sigma: float = float(sigma)
-        self.delta: float = float(delta)
-        self.phase_scale: float = float(phase_scale)
-        self.eps_init: float = float(eps_init)
-
+        self.sigma = float(sigma)
+        self.delta = float(delta)
+        self.phase_scale = float(phase_scale)
+        self.eps_init = float(eps_init)
+        self.elimination_multiplier = float(elimination_multiplier)
         self.active_arms: IntArray = np.arange(self.k, dtype=np.int64)
-        self.phase_idx: int = 0
+        self.phase_idx = 0
         self.phase_remaining_pulls: IntArray = np.zeros(self.k, dtype=np.int64)
+        self.phase_pull_counts: IntArray = np.zeros(self.k, dtype=np.int64)
+        self.phase_reward_sums: FloatArray = np.zeros(self.k, dtype=np.float64)
         self.total_pull_counts: IntArray = np.zeros(self.k, dtype=np.int64)
         self.total_reward_sums: FloatArray = np.zeros(self.k, dtype=np.float64)
-        self._arm_cursor: int = 0
+        self._initial_budget: int | None = None
+        self._current_budget = 0
+        self._phase_radius = 0.0
+        self._arm_cursor = 0
+        self._phase_support: IntArray = np.empty(0, dtype=np.int64)
+        self._pending_arm: int | None = None
         self.reset()
 
     @property
     def name(self) -> str:
-        return "Phased Elimination (Liu et al. 2025)"
+        return "Design-based PE (phase-local)"
+
+    @property
+    def phase_radius(self) -> float:
+        """Noise-calibrated phase confidence radius before multiplier."""
+        return self._phase_radius
 
     def reset(self) -> None:
         self.active_arms = np.arange(self.k, dtype=np.int64)
         self.phase_idx = 0
         self.phase_remaining_pulls = np.zeros(self.k, dtype=np.int64)
+        self.phase_pull_counts = np.zeros(self.k, dtype=np.int64)
+        self.phase_reward_sums = np.zeros(self.k, dtype=np.float64)
         self.total_pull_counts = np.zeros(self.k, dtype=np.int64)
         self.total_reward_sums = np.zeros(self.k, dtype=np.float64)
+        self._initial_budget = None
+        self._current_budget = 0
+        self._phase_radius = 0.0
         self._arm_cursor = 0
+        self._phase_support: IntArray = np.empty(0, dtype=np.int64)
+        self._pending_arm = None
         self._start_new_phase()
-
-    def _phase_epsilon(self, phase_idx: int) -> float:
-        return self.eps_init * (2.0 ** (-(phase_idx - 1)))
 
     def _start_new_phase(self) -> None:
         self.phase_idx += 1
         self.phase_remaining_pulls.fill(0)
+        self.phase_pull_counts.fill(0)
+        self.phase_reward_sums.fill(0.0)
         self._arm_cursor = 0
-
+        self._phase_support = np.empty(0, dtype=np.int64)
         if self.active_arms.size <= 1:
+            self._phase_radius = 0.0
             return
 
-        eps_l = self._phase_epsilon(self.phase_idx)
-        active_X = self.features[self.active_arms]
-        design_res = compute_g_optimal_design(active_X, tol=1e-4)
-        pi_l = design_res.pi
-        r_eff = float(max(1, design_res.effective_rank))
+        X_active = self.features[self.active_arms]
+        design = compute_g_optimal_design(X_active, tol=0.05)
+        rank = design.effective_rank
+        if rank == 0:
+            # All active actions have identical zero features: indistinguishable.
+            self.active_arms = self.active_arms[:1]
+            self._phase_radius = 0.0
+            return
+        if not np.isfinite(design.max_variance) or design.max_variance > 2.0 * rank:
+            raise RuntimeError("G-optimal design failed its leverage certificate")
 
-        k_act = float(self.active_arms.size)
-        log_factor = float(
-            np.log(
-                (2.0 * k_act * float(self.phase_idx) * float(self.phase_idx + 1))
-                / self.delta
-            )
-        )
-        raw_budget = (
-            self.phase_scale
-            * 2.0
-            * r_eff
-            * (self.sigma**2)
-            * log_factor
-            / (eps_l**2)
-        )
-        base_budget = max(3.5 * r_eff, raw_budget)
+        phase_delta = min(0.5, 6.0 * self.delta / (np.pi**2 * self.phase_idx**2))
+        log_factor = float(np.log(2.0 * self.k / phase_delta))
+        if self._initial_budget is None:
+            base = self.phase_scale * 2.0 * rank * self.sigma**2 * log_factor / self.eps_init**2
+            self._initial_budget = max(int(np.ceil(3.5 * rank)), int(np.ceil(base)), 1)
+        self._current_budget = self._initial_budget * (2 ** (self.phase_idx - 1))
+        self._phase_radius = 2.0 * self.sigma * np.sqrt(rank * log_factor / self._current_budget)
 
-        supp_local = np.where(pi_l >= 1e-6)[0]
-        if supp_local.size == 0:
-            supp_local = np.where(pi_l > 0.0)[0]
-        if supp_local.size == 0:
-            supp_local = np.array([0], dtype=np.int64)
-
-        for local_idx in supp_local:
-            weight = float(pi_l[int(local_idx)])
-            global_arm = int(self.active_arms[int(local_idx)])
-            target_i = max(1, int(np.ceil(weight * base_budget - 1e-12)))
-            already_i = int(self.total_pull_counts[global_arm])
-            m_i = max(1, target_i - already_i)
-            self.phase_remaining_pulls[global_arm] = m_i
+        # Rounding every strictly positive design weight upward preserves the
+        # positive-semidefinite order G >= m * M(pi) on the active span.
+        for local in np.flatnonzero(design.pi > 0.0):
+            idx = int(self.active_arms[local])
+            self.phase_remaining_pulls[idx] = int(np.ceil(self._current_budget * float(design.pi[local])))
+        self._phase_support = np.flatnonzero(self.phase_remaining_pulls).astype(np.int64)
+        if self._phase_support.size == 0:
+            raise RuntimeError("G-optimal allocation produced an empty batch")
 
     def _finish_phase_and_eliminate(self) -> None:
         if self.active_arms.size <= 1:
             return
-
-        active_counts = self.total_pull_counts[self.active_arms]
-        pulled_local = np.where(active_counts > 0)[0]
-        if pulled_local.size == 0:
-            return
-
-        pulled_arms = self.active_arms[pulled_local]
-        active_X = self.features[self.active_arms]
-
-        u_mat, s_vals, vt_mat = np.linalg.svd(active_X, full_matrices=False)
-        if s_vals.size == 0 or float(s_vals[0]) <= 1e-15:
-            return
-        r_eff = max(1, int(np.sum(s_vals > 1e-8 * float(s_vals[0]))))
-        Q_sub: FloatArray = vt_mat[:r_eff].T
-
-        Z_pulled: FloatArray = self.features[pulled_arms] @ Q_sub
-        counts_pulled: FloatArray = self.total_pull_counts[pulled_arms].astype(
-            np.float64
-        )
-        sums_pulled: FloatArray = self.total_reward_sums[pulled_arms]
-
-        G_l: FloatArray = (
-            1e-6 * np.eye(r_eff, dtype=np.float64)
-            + (Z_pulled.T * counts_pulled) @ Z_pulled
-        )
-        b_sub: FloatArray = Z_pulled.T @ sums_pulled
-        phi_hat_l: FloatArray = np.linalg.solve(G_l, b_sub)
-
-        Z_active: FloatArray = active_X @ Q_sub
-        est_means: FloatArray = Z_active @ phi_hat_l
-        max_est_mean = float(np.max(est_means))
-
-        eps_l = self._phase_epsilon(self.phase_idx)
-        keep_mask = (max_est_mean - est_means) <= (2.0 * eps_l)
-        if np.any(keep_mask):
-            self.active_arms = self.active_arms[keep_mask]
+        pulled = np.flatnonzero(self.phase_pull_counts)
+        if pulled.size == 0:
+            raise RuntimeError("Cannot eliminate before collecting a phase")
+        active_features = self.features[self.active_arms]
+        active_scale = float(np.max(np.abs(active_features)))
+        if active_scale == 0.0:
+            raise RuntimeError("Unexpected zero active feature span")
+        active_scaled = active_features / active_scale
+        _, singular, vh = np.linalg.svd(active_scaled, full_matrices=False)
+        if singular.size == 0 or singular[0] == 0.0:
+            raise RuntimeError("Degenerate active feature span")
+        rank = int(np.sum(singular > 1e-8 * singular[0]))
+        Q = vh[:rank].T
+        Z = (self.features[pulled] / active_scale) @ Q
+        counts = self.phase_pull_counts[pulled].astype(float)
+        gram = (Z.T * counts) @ Z
+        gram = 0.5 * (gram + gram.T)
+        eigenvalues = np.linalg.eigvalsh(gram)
+        if eigenvalues[0] <= 1e-12 * max(1.0, eigenvalues[-1]):
+            raise RuntimeError("Phase design is rank deficient")
+        rhs = Z.T @ self.phase_reward_sums[pulled]
+        theta_phase = np.linalg.solve(gram, rhs)
+        estimated_means = active_scaled @ Q @ theta_phase
+        cutoff = self.elimination_multiplier * self._phase_radius
+        keep = np.flatnonzero(np.max(estimated_means) - estimated_means <= cutoff)
+        if keep.size == 0:
+            raise RuntimeError("Elimination must retain an estimated maximizer")
+        self.active_arms = self.active_arms[keep]
 
     def select_arm(self) -> int:
+        if self._pending_arm is not None:
+            raise RuntimeError("Call update() before selecting another arm")
         if self.active_arms.size == 1:
-            return int(self.active_arms[0])
-
-        while (
-            self._arm_cursor < self.k
-            and self.phase_remaining_pulls[self._arm_cursor] <= 0
-        ):
-            self._arm_cursor += 1
-
-        if self._arm_cursor >= self.k:
+            self._pending_arm = int(self.active_arms[0])
+            return self._pending_arm
+        while True:
+            while (self._arm_cursor < self._phase_support.size
+                   and self.phase_remaining_pulls[int(self._phase_support[self._arm_cursor])] == 0):
+                self._arm_cursor += 1
+            if self._arm_cursor < self._phase_support.size:
+                self._pending_arm = int(self._phase_support[self._arm_cursor])
+                return self._pending_arm
             self._finish_phase_and_eliminate()
             self._start_new_phase()
             if self.active_arms.size == 1:
-                return int(self.active_arms[0])
-            while (
-                self._arm_cursor < self.k
-                and self.phase_remaining_pulls[self._arm_cursor] <= 0
-            ):
-                self._arm_cursor += 1
-
-        if self._arm_cursor >= self.k:
-            return int(self.active_arms[0])
-        return int(self._arm_cursor)
+                self._pending_arm = int(self.active_arms[0])
+                return self._pending_arm
 
     def update(self, arm_idx: int, reward: float) -> None:
         idx, rew = _validate_arm_and_reward(arm_idx, reward, self.k)
+        if self._pending_arm is None or idx != self._pending_arm:
+            raise ValueError("update() must match the most recently selected arm")
+        self._pending_arm = None
         self.total_pull_counts[idx] += 1
         self.total_reward_sums[idx] += rew
         if self.phase_remaining_pulls[idx] > 0:
+            self.phase_pull_counts[idx] += 1
+            self.phase_reward_sums[idx] += rew
             self.phase_remaining_pulls[idx] -= 1

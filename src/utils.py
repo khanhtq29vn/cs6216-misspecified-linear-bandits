@@ -32,7 +32,7 @@ class OptimalDesignResult:
     ----------
     pi : FloatArray of shape (k_active,)
         Read-only optimal probability distribution over the active arm set A_l summing to 1,
-        with support size guaranteed <= r(r + 1) / 2 via Caratheodory reduction.
+        with support reduced numerically toward r(r + 1) / 2 points.
     max_variance : float
         Independently certified worst-case directional variance
         g(pi) = max_{x in A_l} x^T V(pi)^+ x evaluated on the unregularized Gram matrix.
@@ -70,11 +70,11 @@ def _canonical_feature_order(X: FloatArray) -> IntArray:
     if k <= 1:
         return np.arange(k, dtype=np.int64)
 
-    row_norms = np.linalg.norm(X, axis=1)
-    max_norm = float(np.max(row_norms))
-    scale = max_norm if max_norm > 1e-15 else 1.0
-    X_scaled = np.round(X / scale, decimals=11)
-    norms_rounded = np.round(-row_norms / scale, decimals=11)
+    scale = float(np.max(np.abs(X)))
+    X_unit = X / scale if scale > 0.0 else np.zeros_like(X)
+    row_norms = np.linalg.norm(X_unit, axis=1)
+    X_scaled = np.round(X_unit, decimals=11)
+    norms_rounded = np.round(-row_norms, decimals=11)
 
     keys = [X_scaled[:, j] for j in range(X.shape[1] - 1, -1, -1)]
     keys.append(norms_rounded)
@@ -121,7 +121,8 @@ def sherman_morrison_update(V_inv: FloatArray, x: FloatArray) -> FloatArray:
 
 def batch_mahalanobis_norm(X: FloatArray, A: FloatArray) -> FloatArray:
     """
-    Compute the Mahalanobis norm ||x_i||_A = sqrt(x_i^T A x_i) for every row x_i of X.
+    Compute sqrt(x_i^T A x_i) and reject materially negative input quadratic forms.
+    This does not certify global positive semidefiniteness of A.
     """
     X_arr = np.asarray(X, dtype=np.float64)
     A_arr = np.asarray(A, dtype=np.float64)
@@ -162,8 +163,8 @@ def select_well_conditioned_basis(
     lexicographic tie-breaking.
 
     Properties:
-    - Strictly scale-invariant: replacing X by alpha * X (alpha != 0) selects the
-      exact same basis indices.
+    - Uniform rescaling by a nonzero scalar preserves selection within floating
+      point representability and rank tolerance.
     - Permutation-equivariant on distinct rows: permuting the rows of X selects the
       exact same physical feature vectors, eliminating cross-platform LAPACK dgeqp3
       tie-breaking discrepancies on unit-norm feature sets.
@@ -178,11 +179,14 @@ def select_well_conditioned_basis(
 
     k, d = X_arr.shape
     canon_order = _canonical_feature_order(X_arr)
-    X_canon = X_arr[canon_order].copy()
+    scale = float(np.max(np.abs(X_arr)))
+    if scale == 0.0:
+        return np.array([], dtype=np.int64), np.arange(k, dtype=np.int64)
+    X_canon = (X_arr / scale)[canon_order].copy()
     residual_sq = np.sum(X_canon * X_canon, axis=1)
     max_init_norm = float(np.sqrt(np.max(residual_sq)))
 
-    if max_init_norm <= 1e-15:
+    if max_init_norm == 0.0:
         return np.array([], dtype=np.int64), np.arange(k, dtype=np.int64)
 
     cutoff_sq = (float(tol) * max_init_norm) ** 2
@@ -286,13 +290,14 @@ def compute_g_optimal_design(
     Away-Step Frank-Wolfe (Fedorov-Wynn-Atwood-Todd), and Caratheodory support reduction.
 
     Key Mathematical & Numerical Properties:
-    1. Exact Scale Invariance: Whitens the active subspace via reduced SVD X = U_r Sigma_r V_r^T,
+    1. Scale-invariant geometry: normalizes by the largest absolute feature before
+       whitening via reduced SVD X = U_r Sigma_r V_r^T,
        working in the dimensionless orthonormal coordinate matrix Z = U_r in R^{k_active x r}.
     2. Exact Finite-Step Objective Comparison: Compares the exact D-optimal log-determinant
        gain Delta_toward vs. Delta_away (accounting for step-size clipping at alpha_max = pi_j/(1-pi_j))
-       and sets dropped weights strictly to 0.0, achieving linear convergence in < 80 iterations.
-    3. Caratheodory Support Reduction & Independent Recertification: Reduces support to
-       at most r(r+1)/2 positive weights while preserving M(pi) to machine precision.
+       and sets dropped weights to zero when numerically justified.
+    3. Caratheodory support reduction is attempted and the final leverage is
+       recomputed on the actual returned distribution.
     """
     X_arr = np.asarray(arm_features, dtype=np.float64)
     if X_arr.ndim != 2 or X_arr.shape[0] == 0 or X_arr.shape[1] == 0:
@@ -308,8 +313,8 @@ def compute_g_optimal_design(
 
     k_active, _ = X_arr.shape
 
-    u_mat, s_vals, _ = np.linalg.svd(X_arr, full_matrices=False)
-    if s_vals.size == 0 or float(s_vals[0]) <= 1e-15:
+    max_abs_feature = float(np.max(np.abs(X_arr)))
+    if max_abs_feature == 0.0:
         pi_uniform = np.full(k_active, 1.0 / float(k_active), dtype=np.float64)
         return OptimalDesignResult(
             pi=pi_uniform,
@@ -320,6 +325,9 @@ def compute_g_optimal_design(
             converged=True,
         )
 
+    # Work at unit scale: direct SVD of very small nonzero features can
+    # otherwise misclassify the active span as zero rank by absolute threshold.
+    u_mat, s_vals, _ = np.linalg.svd(X_arr / max_abs_feature, full_matrices=False)
     rank_eff = int(np.sum(s_vals > 1e-8 * float(s_vals[0])))
     rank_eff = max(1, rank_eff)
     r_float = float(rank_eff)
@@ -451,7 +459,7 @@ def compute_g_optimal_design(
             converged = True
             break
 
-    # Apply Caratheodory support reduction to guarantee |supp(pi)| <= r(r+1)/2
+    # Attempt support reduction, then independently re-check the design
     pi_red = _caratheodory_support_reduction(Z, pi, tol=1e-12)
     ok_red, _, vars_red = _eval_unregularized_leverages(pi_red)
     if ok_red and float(np.max(vars_red)) <= max(

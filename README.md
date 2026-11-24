@@ -1,68 +1,125 @@
-# Contextual and Linear Bandits under Model Misspecification
-
-**Course:** CS6216 – Sequential Decision Making (National University of Singapore)  
-**Instructor:** Prof. Jonathan Scarlett  
-**Group 13a:** Tran Quoc Khanh & Nurmukhammed Aitymbetov  
-
----
-
-## 1. Overview
-
-This repository contains the reproducible Python simulation framework, mathematical unit test suite, Monte Carlo experimental benchmarks, and LaTeX lecture notes (`notes/main.tex` and `notes/slides.tex`) for **Group 13a**'s project on **Contextual and Linear Bandits under Model Misspecification**.
-
-We investigate both theoretically and empirically how stochastic linear bandit algorithms behave when the classical linear realizability assumption $f_0(\mathbf{x}) = \langle \mathbf{x}, \boldsymbol{\theta}^* \rangle$ is violated across three distinct regimes:
-
-1. **Regime 1 — Exact Realizability ($\varepsilon \equiv 0$, Section 2):**  Classical stochastic linear bandits where **LinUCB / OFUL** achieves $`\tilde{\mathcal{O}}(d\sqrt{n})`$ cumulative regret and **$G$-Optimal Phased Elimination** achieves $`\tilde{\mathcal{O}}(\sqrt{dn})`$, outperforming unstructured **Standard UCB** ($`\tilde{\mathcal{O}}(\sqrt{kn})`$) when $d \ll k$ ([Li et al., 2010](https://arxiv.org/abs/1003.0146); [Abbasi-Yadkori et al., 2011](https://papers.nips.cc/paper/2011/hash/e1d5be1c7f2f456670de3d53c7b54f4a-Abstract.html)).
-
-2. **Regime 2 — Uniform & Sparse Subspace Misspecification (Section 3, [Ghosh et al., AAAI 2017](https://arxiv.org/abs/1704.06880)):**  When the true reward vector satisfies $\boldsymbol{\mu} = X^T \boldsymbol{\theta}^* + \boldsymbol{\varepsilon}$ with a positive sparse deviation $\varepsilon_k > \theta_1^* - \mu_k^{\mathrm{lin}}$ on an optimal arm whose feature vector lies in the span of uncorrupted suboptimal basis arms with shrinkage coordinates ($\alpha_1 + \alpha_2 < 1$), unmodified **LinUCB/OFUL** suffers catastrophic linear regret $\Omega(n)$ due to subspace extrapolation bias (Theorem 3.2). We implement the two-phase **Robust Linear Bandit (RLB)** algorithm (Algorithm 3), which tests the parameter-free subspace discrepancy $`\langle \mathbf{c}, \boldsymbol{\hat{\mu}}_{\mathcal{B}} \rangle - \hat{\mu}_{d+1}`$ in Phase 1 to safely interpolate between **LinUCB** ($`\tilde{\mathcal{O}}(d\sqrt{n})`$ under $`H_0`$) and **Standard UCB** ($\tilde{\mathcal{O}}(\sqrt{kn})$ under $H_1$, Theorem 3.3).
-
-3. **Regime 3 — $\rho$-Gap-Adjusted Misspecification ($\rho$-GAM, Section 4, [Liu, Qiao, Yin, Bogunovic, & Wang, 2025](https://arxiv.org/abs/2501.05361)):**  When the pointwise linear approximation error is bounded proportionally to the true suboptimality gap, $|f_{\mathbf{w}}^\star(\mathbf{x}) - f_0(\mathbf{x})| \le \rho (f^\star - f_0(\mathbf{x}))$ for $\rho \in [0, 1)$ (Definition 4.1), the misspecification bias becomes self-bounding as suboptimal arms are eliminated. Sublinear no-regret guarantees are restored for both unmodified **LinUCB** ($\rho \lesssim \frac{1}{d\sqrt{\log n}}$, Theorem 4.3) and **$G$-Optimal Phased Elimination** ($\rho < \frac{1}{2\sqrt{d}+1} = \mathcal{O}(1/\sqrt{d})$, Theorem 4.4), even when the global uniform error $\|\boldsymbol{\varepsilon}\|_\infty$ on far-from-optimal arms is large. 
----
-
-## 2. Repository Architecture
-
-```text
-cs6216-misspecified-linear-bandits/
-├── src/
-│   ├── __init__.py          # Package exports
-│   ├── utils.py             # Sherman-Morrison O(d^2) updates, Pivoted-QR basis selection,
-│   │                        # and whitened Away-Step Frank-Wolfe G-optimal design solver
-│   ├── environments.py      # Self-verifying bandit environments (Realizable, Ghosh Sparse, Liu rho-GAM)
-│   └── algorithms.py        # StandardUCB, LinUCB, RobustLinearBanditRLB, PhasedEliminationBandit
-├── tests/
-│   └── test_bandits.py      # 12 unit & regression tests (including technical audit invariants)
-├── experiments/
-│   ├── __init__.py
-│   ├── run_experiments.py   # Multi-seed Monte Carlo runner (20 main seeds, 15 sweep seeds)
-│   ├── plot_results.py      # Publication-grade vector PDF/PNG figure generator
-│   ├── results_summary.npz  # Compressed numerical arrays and per-seed trajectories
-│   └── table_results.tex    # Auto-generated LaTeX booktabs summary table
-├── figures/                 # Vector PDF and 300-DPI PNG figures (fig1 to fig4)
-├── verify_setup.py          # Deterministic end-to-end mathematical & numerical verification
-├── requirements.txt         # Pinned scientific Python dependencies
-└── README.md                # Project documentation and reproducibility guide
-```
-
----
-
-## 3. Reproducibility & Execution Commands
-
-### 3.1. Environment Setup (macOS / Linux)
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-### 3.2. Run Mathematical Unit Tests & Fast Verification
-```bash
+**CS6216 · Sequential Decision Making · NUS · Group 13a**
+Tran Quoc Khanh and Nurmukhammed Aitymbetov
+This repository provides synthetic finite-action bandit environments, four numerical
+policies, deterministic tests, and a multi-seed Monte Carlo evaluation pipeline.
+The experiment implementations are distinguished from the theoretical algorithms
+in the papers discussed in our lecture notes.
+## Scope and mathematical model
+An arm with feature vector `x` has expected reward
+`f0(x) = x @ theta_star + epsilon(x)`.
+The experiments compare:
+| Policy name in generated output | Implementation |
+| --- | --- |
+| `Standard UCB` | Unstructured UCB with Gaussian/sub-Gaussian-width bonus |
+| `LinUCB (scaled OFUL)` | Shared-feature ridge optimism with confidence multiplier `0.60` |
+| `Basis-test RLB variant` | Fixed-basis linearity screen using up to three diagnostic arms, followed by an optimistic linear policy or unstructured UCB |
+| `Design-based PE (phase-local)` | New G-optimal allocation in each phase, phase-local OLS, geometrically increasing phase budgets, and noise-calibrated elimination |
+**Comparison with the literature.** The LinUCB confidence multiplier is tuned for
+simulation; it is not the confidence radius in Theorem 9 of Liu et al. The
+basis-screening policy is not Algorithm 1 of Ghosh et al.: it does not enforce
+the non-sparse-deviation/coverage conditions needed for the original guarantee.
+The PE implementation fits each phase independently, but its empirical sample
+schedule and elimination threshold are not the theorem-calibrated Algorithm 2
+of Liu et al. The latter uses a factor `16` with a particular confidence
+convention and sample schedule. Changing only `elimination_multiplier` to `16`
+does not make these code paths equivalent.
+The synthetic regimes are:
+1. **Realizable:** zero approximation error and a unique best arm.
+2. **Sparse corruption:** one arm receives an additive reward perturbation,
+   illustrating the hidden-optimum failure of optimistic linear extrapolation.
+3. **Pure rho-GAM:** pointwise errors satisfy
+   `abs(epsilon(x)) <= rho * (f_star - f0(x))`, checked arm-by-arm during
+   construction. On the standard rho sweep `0 <= rho <= 0.60`, all expected
+   reward gaps are at most `1`, matching the bounded-gap normalization used
+   in Liu et al.'s Assumption 5.
+The hand-constructed synthetic action sets are illustrative, not a random sample of
+all realizable, sparse or gap-adjusted problems. Their parameter choices were
+fixed in source before the new benchmark is run; one cannot infer universal
+algorithm rankings from these instances. No settings should be selected after
+examining the benchmark outputs without documenting a new experimental version.
+The experiment's `rho = 0.30` is **outside** the sufficient theorem range
+`rho <= 1/(16*sqrt(d))` for the modified PE in Liu et al. Finite-horizon
+figures do not establish asymptotic regret results.
+## Reproducible setup
+Run commands from the repository root with Python 3.11 or later:
+python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
 python verify_setup.py
+An end-to-end **small smoke run** with isolated outputs:
+
+python -m experiments.run_experiments --quick \
+  --seeds-main 1 --seeds-sweep 1 \
+  --horizon-main 30 --horizon-sweep 20 \
+  --output-dir experiments/quick/smoke
+MPLBACKEND=Agg python -m experiments.plot_results \
+  --input experiments/quick/smoke/results_summary.npz \
+  --output-dir figures/quick/smoke
+Run the **full benchmark** (main: 20 seeds × 6,000 rounds;
+secondary sweeps: 15 seeds × 4,000 rounds) and generate figures:
+
+MPLBACKEND=Agg python -m experiments.plot_results
 ```
 
-### 3.3. Run Full 20-Seed Monte Carlo Benchmarks & Export Figures
-```bash
-python -m experiments.run_experiments
-python -m experiments.plot_results
-```
+To rerun only the three main regimes (without auxiliary sweeps), use
+`python -m experiments.run_main_only`. It writes a distinct, incomplete
+archive in `experiments/main_only/`, and never masquerades as a full run.
+
+The default full run writes `experiments/results_summary.npz`,
+`experiments/table_results.tex`, and eight PDF/PNG figure files in `figures/`.
+The `--quick` switch defaults to three seeds and short horizons
+(600 main rounds, 400 sweep rounds), writes to `experiments/quick/`, and
+does not overwrite full outputs. Command-line overrides allow reproducibility checks
+with smaller seed counts and horizons; the output table reads these values
+from the archive rather than hardcoding them. The `--only-exp3b` mode additionally checks the exact source SHA-256 digest,
+seed protocol, version and experiment settings. It rejects historical archives
+or archives from another source revision rather than mixing outputs. Existing
+numerical outputs and figures are never silently replaced: use a fresh
+`--output-dir` or an explicit `--overwrite` after preserving previous results.
+
+**Timing:** The complete multi-seed, multi-sweep experiment can be costly on
+laptops. Small smoke runs test pipeline integrity, not statistical precision.
+The two main and sweep seed counts are intentionally different.
+
+## Data lineage
+
+The uploaded source archive contained a numerical result table, NPZ, and
+figures generated by an earlier algorithm implementation. These are retained
+without modification under `experiments/archive/2026-10-29/` and are **not**
+outputs of the revised code. See
+[`experiments/archive/2026-10-29/ORIGIN.md`](experiments/archive/2026-10-29/ORIGIN.md).
+
+Fresh results are deliberately absent from the source package until the
+corresponding benchmark command is executed. The archive contains metadata
+for seed counts, horizons, method identifiers, Python/NumPy versions and Git
+revision (when available). Individual noise streams use deterministic NumPy random generators with
+documented seeds. The epsilon and rho sweeps use the **same trial seeds at
+every parameter level**, so the feature geometry, arm permutation and noise
+streams are paired; only the investigated model parameter changes. Different
+algorithms currently use independent noise streams. The NPZ also stores raw
+per-trial regret trajectories/final regret values and RLB rejection indicators
+so every mean, standard error and parameter-level comparison can be audited
+without re-running the experiment. The archive records a source SHA-256,
+seed-protocol version, Git worktree state, and runtime versions; raw NPZ
+files and command logs should be retained alongside any published results.
+
+## Repository layout
+
+```text
+src/                 Policies, reward environments, optimal design utilities
+experiments/         Runner, TeX table generator, figure generator
+experiments/archive/ Historical benchmark outputs with provenance
+figures/             Generated figures (populated after a run)
+tests/               Unit and regression tests
+.github/workflows/   Continuous integration smoke checks
+docs/                Model contracts and change-impact register
+verify_setup.py      Deterministic numerical smoke evaluation
+
+## Primary literature
+
+- Li, Chu, Langford & Schapire (2010), [Contextual-Bandit News Recommendation](https://arxiv.org/abs/1003.0146).
+- Abbasi-Yadkori, Pál & Szepesvári (2011), [Improved Algorithms for Linear Stochastic Bandits](https://papers.nips.cc/paper/2011/hash/e1d5be1c7f2f456670de3d53c7b54f4a-Abstract.html).
+- Ghosh, Chowdhury & Gopalan (2017), [Misspecified Linear Bandits](https://arxiv.org/abs/1704.06880).
+- Lattimore, Szepesvári & Weisz (2020), *Learning with Good Feature Representations in Bandits and in RL with a Generative Model*.
+- Liu, Qiao, Yin, Bogunovic & Wang (2025), [No-Regret Linear Bandits under Gap-Adjusted Misspecification](https://arxiv.org/abs/2501.05361).
+
+MIT license. See [`LICENSE`](LICENSE).

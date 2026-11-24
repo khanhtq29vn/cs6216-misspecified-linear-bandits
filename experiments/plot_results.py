@@ -1,5 +1,5 @@
 """
-Publication-quality, zero-overlap vector PDF figure generator for CS6216 Group 13a.
+Vector PDF/PNG figure generator for the CS6216 synthetic benchmarks.
 
 Loads `experiments/results_summary.npz` and exports four 2-panel figures to `figures/`:
 1. `figures/fig1_realizable_benchmark.pdf`:
@@ -9,7 +9,7 @@ Loads `experiments/results_summary.npz` and exports four 2-panel figures to `fig
    (a) Cumulative regret R_t under sparse subspace misspecification (eps_k = 0.45).
    (b) Phase transition of R_n and RLB hypothesis-test rejection rate across eps_k.
 3. `figures/fig3_liu_gam_benchmark.pdf`:
-   (a) Cumulative regret R_t under rho-GAM (rho = 0.30, large ||eps||_inf = 0.35).
+   (a) Cumulative regret R_t under rho-GAM (rho = 0.30).
    (b) Final regret R_n across misspecification parameter rho in [0.05, 0.60].
 4. `figures/fig4_structural_diagnostics.pdf`:
    (a) Geometric comparison of the rho-GAM cone vs. uniform l_inf tube.
@@ -19,11 +19,16 @@ Loads `experiments/results_summary.npz` and exports four 2-panel figures to `fig
 from __future__ import annotations
 
 import os
+import argparse
+from pathlib import Path
 from typing import Dict, List
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from experiments.provenance import verify_provenance
 
+
+FIGURE_OUTPUT_DIR = "figures"
 
 ALG_STYLES: Dict[str, Dict[str, object]] = {
     "Standard UCB": {
@@ -33,26 +38,26 @@ ALG_STYLES: Dict[str, Dict[str, object]] = {
         "linewidth": 2.1,
         "label": "Standard UCB (Unstructured)",
     },
-    "LinUCB (OFUL)": {
+    "LinUCB (scaled OFUL)": {
         "color": "#D55E00",
         "linestyle": "-",
         "marker": "o",
         "linewidth": 2.3,
-        "label": "LinUCB / OFUL",
+        "label": "LinUCB (scaled OFUL)",
     },
-    "RLB (Ghosh et al. 2017)": {
+    "Basis-test RLB variant": {
         "color": "#0072B2",
         "linestyle": "-.",
         "marker": "^",
         "linewidth": 2.3,
-        "label": "RLB (Ghosh et al., 2017)",
+        "label": "Basis-test RLB variant",
     },
-    "Phased Elimination (Liu et al. 2025)": {
+    "Design-based PE (phase-local)": {
         "color": "#009E73",
         "linestyle": "-",
         "marker": "D",
         "linewidth": 2.3,
-        "label": "Phased Elimination (G-Optimal)",
+        "label": "Design-based PE (phase-local)",
     },
 }
 
@@ -110,7 +115,8 @@ def add_shared_top_legend(fig: plt.Figure) -> None:
     )
 
 
-def save_figure(fig: plt.Figure, base_name: str, out_dir: str = "figures") -> None:
+def save_figure(fig: plt.Figure, base_name: str, out_dir: str | None = None) -> None:
+    out_dir = out_dir or FIGURE_OUTPUT_DIR
     os.makedirs(out_dir, exist_ok=True)
     pdf_path = os.path.join(out_dir, f"{base_name}.pdf")
     png_path = os.path.join(out_dir, f"{base_name}.png")
@@ -165,7 +171,7 @@ def plot_figure1_realizable(data: np.lib.npyio.NpzFile) -> None:
         )
 
     ax2.set_title(
-        "(b) Regret Scaling vs. Number of Arms $k$ ($d=5,\\; n=4{,}000$)"
+        f"(b) Regret vs. Number of Arms $k$ ($d=5$, $n={int(data['meta_sweep_horizon'][0]):,}$)"
     )
     ax2.set_xlabel("Number of Actions $k$")
     ax2.set_ylabel("Final Cumulative Regret $R_n$")
@@ -174,8 +180,8 @@ def plot_figure1_realizable(data: np.lib.npyio.NpzFile) -> None:
 
     ucb_k150 = float(data["exp1_ksweep_Standard UCB_mean"][-2])
     ax2.annotate(
-        "Unstructured UCB grows with action count $k$\n"
-        "Structured linear learners remain $k$-invariant",
+        "Observed effect of action count $k$\n"
+        "depends on features and policy",
         xy=(150, ucb_k150),
         xytext=(14, max_y2 * 0.84),
         arrowprops=dict(
@@ -213,15 +219,16 @@ def plot_figure2_ghosh_sparse(data: np.lib.npyio.NpzFile) -> None:
             t_grid, mean - se, mean + se, color=style["color"], alpha=0.16
         )
 
-    ax1.axvline(160, color="#0072B2", linestyle=":", linewidth=1.5)
-    ax1.text(
-        240,
-        max_y1 * 0.88,
-        "RLB Phase-1 Test ($t = 160$)\nRejects $H_0 \\to$ switches to UCB",
-        color="#0072B2",
-        fontsize=8.3,
-        bbox=dict(boxstyle="round,pad=0.28", fc="#EBF5FB", ec="#0072B2", alpha=0.92),
-    )
+    if t_grid[-1] >= 160:
+        ax1.axvline(160, color="#0072B2", linestyle=":", linewidth=1.5)
+        ax1.text(
+            0.04, 0.88,
+            "RLB basis screen ($t=160$)\n"
+            "Selection depends on diagnostic results",
+            transform=ax1.transAxes, ha="left", va="top",
+            color="#0072B2", fontsize=7.8,
+            bbox=dict(boxstyle="round,pad=0.25", fc="#EBF5FB", ec="#0072B2", alpha=0.92),
+        )
     ax1.set_title(
         "(a) Sparse Misspecification ($\\varepsilon_k = 0.45,\\; k=20,\\; d=5$)"
     )
@@ -256,7 +263,7 @@ def plot_figure2_ghosh_sparse(data: np.lib.npyio.NpzFile) -> None:
         )
 
     ax2.set_title(
-        "(b) Breakdown of LinUCB vs. RLB Recovery ($n = 4{,}000$)"
+        f"(b) Sparse Perturbation Sweep ($n={int(data['meta_sweep_horizon'][0]):,}$)"
     )
     ax2.set_xlabel("Sparse Deviation Magnitude $\\varepsilon_k$ on Corrupted Arm")
     ax2.set_ylabel("Final Cumulative Regret $R_n$")
@@ -314,7 +321,8 @@ def plot_figure3_liu_gam(data: np.lib.npyio.NpzFile) -> None:
         )
 
     ax1.set_title(
-        "(a) $\\rho$-Gap-Adjusted Misspecification ($\\rho = 0.30,\\; \\|\\boldsymbol{\\varepsilon}\\|_\\infty = 0.35$)"
+        f"(a) Gap-Adjusted Misspecification ($\\rho=0.30$, "
+        f"$\\|\\boldsymbol{{\\varepsilon}}\\|_\\infty={float(data['diag_eps_inf'][0]):.3f}$)"
     )
     ax1.set_xlabel("Round $t$")
     ax1.set_ylabel("Cumulative Pseudo-Regret $R_t$")
@@ -340,7 +348,7 @@ def plot_figure3_liu_gam(data: np.lib.npyio.NpzFile) -> None:
         )
 
     ax2.set_title(
-        "(b) Empirical Behavior Across $\\rho$-GAM Ratio ($n = 4{,}000,\\; k=40,\\; d=5$)"
+        f"(b) Gap-Adjusted Sweep ($n={int(data['meta_sweep_horizon'][0]):,}$, $k=40$, $d=5$)"
     )
     ax2.set_xlabel("Gap-Adjusted Misspecification Parameter $\\rho$")
     ax2.set_ylabel("Final Cumulative Regret $R_n$")
@@ -348,11 +356,11 @@ def plot_figure3_liu_gam(data: np.lib.npyio.NpzFile) -> None:
     ax2.set_ylim(0, max_y2 * 1.38)
 
     pe_val = float(
-        data["exp3_sweep_Phased Elimination (Liu et al. 2025)_mean"][4]
+        data["exp3_sweep_Design-based PE (phase-local)_mean"][4]
     )
     ax2.annotate(
-        "LinUCB & Phased Elimination stay sublinear\n"
-        "despite large global $\\|\\boldsymbol{\\varepsilon}\\|_\\infty$ under $\\rho$-GAM",
+        "Empirical regret at fixed horizon;\n"
+        "not an asymptotic guarantee",
         xy=(float(rho_grid[4]), pe_val),
         xytext=(0.04, max_y2 * 1.15),
         arrowprops=dict(
@@ -494,40 +502,49 @@ def plot_figure4_structural_diagnostics(data: np.lib.npyio.NpzFile) -> None:
     )
 
     ax2.set_title(
-        "(b) Mechanism of LinUCB Breakdown (Ghosh et al., Theorem 1)"
+        "(b) Sparse Corruption: Linear Optimism Can Miss the Best Arm"
     )
     ax2.set_xlabel("Round $t$")
     ax2.set_ylabel("Reward / Upper Confidence Index")
     ax2.set_xlim(1, len(t_trace))
     ax2.set_ylim(0.24, 1.58)
 
-    above_indices = np.flatnonzero(ucb_opt >= true_arm0)
-    if above_indices.size > 0 and int(above_indices[-1]) + 1 < len(t_trace):
-        cross_idx = int(above_indices[-1]) + 1
-    else:
-        below_indices = np.flatnonzero(ucb_opt < true_arm0)
-        cross_idx = int(below_indices[min(120, below_indices.size - 1)])
-
-    cross_round = int(t_trace[cross_idx])
-    cross_y = float(ucb_opt[cross_idx])
-    ax2.scatter([cross_round], [cross_y], color="#D91E18", s=42, zorder=6)
-    ax2.annotate(
-        f"$\\mathrm{{UCB}}_k(t) < \\mu_1$ ($t = {cross_round}$):\n"
-        "Basis Arm 1 pulls shrink $\\|\\mathbf{x}_k\\|_{V_{t-1}^{-1}}$\n"
-        "around $\\mu_k^{\\mathrm{lin}} = 0.485$, locking out Arm $k$",
-        xy=(cross_round, cross_y),
-        xytext=(380, 0.27),
-        arrowprops=dict(
-            arrowstyle="->",
-            color="#D91E18",
-            lw=1.3,
-            connectionstyle="arc3,rad=-0.15",
-        ),
-        fontsize=8.0,
-        bbox=dict(
-            boxstyle="round,pad=0.28", fc="#FDEDEC", ec="#D91E18", alpha=0.95
-        ),
+    # Report a downward confidence-index crossing only if the recorded trace
+    # actually contains one. Never invent a crossing for an illustrative plot.
+    downward_crossings = np.flatnonzero(
+        (ucb_opt[:-1] >= true_arm0) & (ucb_opt[1:] < true_arm0)
     )
+    if downward_crossings.size > 0:
+        cross_idx = int(downward_crossings[0]) + 1
+        cross_round = int(t_trace[cross_idx])
+        cross_y = float(ucb_opt[cross_idx])
+        ax2.scatter([cross_round], [cross_y], color="#D91E18", s=42, zorder=6)
+        ax2.annotate(
+            f"Observed $\\mathrm{{UCB}}_k(t) < \\mu_1$ ($t = {cross_round}$):\n"
+            "Optimistic extrapolation falls below the basis-arm mean",
+            xy=(cross_round, cross_y),
+            xytext=(max(5, int(len(t_trace) * 0.24)), 0.27),
+            arrowprops=dict(
+                arrowstyle="->",
+                color="#D91E18",
+                lw=1.3,
+                connectionstyle="arc3,rad=-0.15",
+            ),
+            fontsize=8.0,
+            bbox=dict(
+                boxstyle="round,pad=0.28", fc="#FDEDEC", ec="#D91E18", alpha=0.95
+            ),
+        )
+    elif np.all(ucb_opt < true_arm0):
+        ax2.text(
+            0.49, 0.06, "Index remains below the basis-arm mean in this trace",
+            transform=ax2.transAxes, fontsize=8.0, ha="center",
+        )
+    else:
+        ax2.text(
+            0.49, 0.06, "No downward crossing observed within this horizon",
+            transform=ax2.transAxes, fontsize=8.0, ha="center",
+        )
 
     ax2.legend(
         loc="upper right",
@@ -543,21 +560,48 @@ def plot_figure4_structural_diagnostics(data: np.lib.npyio.NpzFile) -> None:
 
 
 def main() -> None:
-    npz_path = os.path.join("experiments", "results_summary.npz")
+    parser = argparse.ArgumentParser(description="Render benchmark figures from a result archive")
+    parser.add_argument("--input", type=Path, default=Path("experiments/results_summary.npz"))
+    parser.add_argument("--output-dir", type=Path, default=Path("figures"))
+    parser.add_argument("--overwrite", action="store_true",
+                        help="Explicitly authorize replacing existing figure files")
+    args = parser.parse_args()
+    npz_path = str(args.input)
     if not os.path.exists(npz_path):
         raise FileNotFoundError(
             f"Could not find {npz_path}. Please run `python -m experiments.run_experiments` first."
         )
 
+    figure_stems = (
+        "fig1_realizable_benchmark", "fig2_ghosh_sparse_misspec",
+        "fig3_liu_gam_benchmark", "fig4_structural_diagnostics",
+    )
+    existing = [
+        args.output_dir / f"{stem}.{extension}"
+        for stem in figure_stems for extension in ("pdf", "png")
+        if (args.output_dir / f"{stem}.{extension}").exists()
+    ]
+    if existing and not args.overwrite:
+        parser.error("Existing figures detected; use a new --output-dir or explicit --overwrite")
     configure_matplotlib_style()
-    data = np.load(npz_path)
-
-    print("Generating overlap-free vector PDF figures in `figures/`...")
-    plot_figure1_realizable(data)
-    plot_figure2_ghosh_sparse(data)
-    plot_figure3_liu_gam(data)
-    plot_figure4_structural_diagnostics(data)
-    print("All 4 figures exported successfully!")
+    with np.load(npz_path, allow_pickle=False) as data:
+        if ("meta_method_names" not in data
+            or "meta_complete" not in data
+            or int(data["meta_complete"][0]) != 1
+            or set(data["meta_method_names"]) != set(ALG_STYLES)):
+            raise ValueError("Input results are incompatible with this plotting version")
+        try:
+            verify_provenance({k: data[k] for k in ("meta_schema_version", "meta_seed_protocol", "meta_source_sha256") if k in data})
+        except ValueError as exc:
+            raise ValueError(f"Cannot plot unverified or obsolete experiment archive: {exc}") from exc
+        global FIGURE_OUTPUT_DIR
+        FIGURE_OUTPUT_DIR = str(args.output_dir)
+        print(f"Generating vector figures in {FIGURE_OUTPUT_DIR}...")
+        plot_figure1_realizable(data)
+        plot_figure2_ghosh_sparse(data)
+        plot_figure3_liu_gam(data)
+        plot_figure4_structural_diagnostics(data)
+    print("All four figures exported")
 
 
 if __name__ == "__main__":

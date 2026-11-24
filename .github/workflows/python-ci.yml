@@ -1,0 +1,29 @@
+name: Python research checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install runtime requirements
+        run: python -m pip install -r requirements.txt
+      - name: Run unit and regression suite
+        run: python -m unittest discover -s tests -v
+      - name: Compile all Python sources
+        run: python -m compileall -q src experiments tests verify_setup.py
+      - name: Run deterministic smoke simulation
+        run: |
+          python -m experiments.run_experiments --quick --seeds-main 1 --seeds-sweep 1 --horizon-main 30 --horizon-sweep 20 --output-dir experiments/quick/ci
+          MPLBACKEND=Agg python -m experiments.plot_results --input experiments/quick/ci/results_summary.npz --output-dir figures/quick/ci

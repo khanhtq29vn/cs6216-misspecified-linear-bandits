@@ -30,7 +30,13 @@ import argparse
 import os
 import time
 from typing import Callable, Dict, List, Tuple
+from pathlib import Path
+import sys
 import numpy as np
+
+from experiments.provenance import (
+    provenance_fields, verify_provenance, atomic_savez, atomic_write_text
+)
 
 from src.environments import (
     LinearBanditEnvironment,
@@ -49,47 +55,35 @@ from src.algorithms import (
 
 ALGORITHM_NAMES: List[str] = [
     "Standard UCB",
-    "LinUCB (OFUL)",
-    "RLB (Ghosh et al. 2017)",
-    "Phased Elimination (Liu et al. 2025)",
+    "LinUCB (scaled OFUL)",
+    "Basis-test RLB variant",
+    "Design-based PE (phase-local)",
 ]
 
 
 def build_learners(env: LinearBanditEnvironment) -> Dict[str, BanditPolicy]:
+    """Instantiate the four fixed-configuration benchmark policies.
+
+    The confidence multiplier 0.60 and PE phase settings are empirical
+    choices; neither implements the complete paper-specific regret calibration.
     """
-    Instantiate the four benchmark algorithms with strictly synchronized hyperparameters:
-    - Both standalone `LinUCB (OFUL)` and `RLB`'s internal `self.linucb` use the exact
-      same `confidence_scale=0.60` so their post-Phase-1 slopes in Regime 1 match 100%.
-    - `RLB` uses `test_delta=0.005` (~ O(1/n)) to prevent Type-I false rejections under H_0
-      even when scaling up to k = 200 arms.
-    """
-    return {
-        "Standard UCB": StandardUCB(k=env.k, sigma=env.sigma, c_bonus=2.0),
-        "LinUCB (OFUL)": LinUCB(
-            features=env.features,
-            sigma=env.sigma,
-            reg_lambda=1.0,
-            delta=0.05,
-            confidence_scale=0.60,
+    learners = [
+        StandardUCB(k=env.k, sigma=env.sigma, c_bonus=2.0),
+        LinUCB(
+            features=env.features, sigma=env.sigma, reg_lambda=1.0,
+            delta=0.05, confidence_scale=0.60,
         ),
-        "RLB (Ghosh et al. 2017)": RobustLinearBanditRLB(
-            features=env.features,
-            sigma=env.sigma,
-            tau_per_arm=20,
-            delta=0.05,
-            test_delta=0.005,
-            reg_lambda=1.0,
-            confidence_scale=0.60,
-            num_test_arms=3,
+        RobustLinearBanditRLB(
+            features=env.features, sigma=env.sigma, tau_per_arm=20,
+            delta=0.05, test_delta=0.005, reg_lambda=1.0,
+            confidence_scale=0.60, num_test_arms=3,
         ),
-        "Phased Elimination (Liu et al. 2025)": PhasedEliminationBandit(
-            features=env.features,
-            sigma=env.sigma,
-            delta=0.05,
-            phase_scale=0.12,
-            eps_init=0.25,
+        PhasedEliminationBandit(
+            features=env.features, sigma=env.sigma, delta=0.05,
+            phase_scale=0.12, eps_init=0.25, elimination_multiplier=2.0,
         ),
-    }
+    ]
+    return {learner.name: learner for learner in learners}
 
 
 def simulate_trajectories(
@@ -98,7 +92,8 @@ def simulate_trajectories(
     n_seeds: int,
     subsample_step: int = 20,
     base_seed: int = 1000,
-) -> Tuple[np.ndarray, Dict[str, np.ndarray], Dict[str, np.ndarray], float]:
+    return_raw: bool = False,
+) -> tuple:
     """
     Run Monte Carlo simulations across `n_seeds` independent trials and record
     subsampled cumulative pseudo-regret trajectories (always including `horizon`).
@@ -121,6 +116,7 @@ def simulate_trajectories(
         for name in ALGORITHM_NAMES
     }
     rlb_rejections = 0
+    rejection_flags = np.zeros(n_seeds, dtype=np.int8)
 
     for s_idx in range(n_seeds):
         env_seed = base_seed + 97 * s_idx
@@ -150,6 +146,7 @@ def simulate_trajectories(
                 and learner.rejected_H0
             ):
                 rlb_rejections += 1
+                rejection_flags[s_idx] = 1
 
     mean_trajs = {name: np.mean(all_trajs[name], axis=0) for name in ALGORITHM_NAMES}
     se_trajs = {
@@ -159,6 +156,8 @@ def simulate_trajectories(
         for name in ALGORITHM_NAMES
     }
     rlb_reject_rate = float(rlb_rejections) / float(n_seeds)
+    if return_raw:
+        return t_grid, mean_trajs, se_trajs, rlb_reject_rate, all_trajs, rejection_flags
     return t_grid, mean_trajs, se_trajs, rlb_reject_rate
 
 
@@ -243,8 +242,12 @@ def export_latex_summary_table(
 ) -> None:
     """
     Generate a clean LaTeX booktabs table summarizing final cumulative regret R_n
-    (mean +/- standard error over 20 Monte Carlo trials) and RLB rejection rates.
+    (mean +/- standard error over the recorded main-run seeds) and RLB rejection rates.
     """
+    n_seeds = int(results["meta_main_seeds"][0])
+    horizon = int(results["meta_main_horizon"][0])
+    if n_seeds < 1 or horizon < 1:
+        raise ValueError("Invalid experiment metadata for table generation")
     rej1 = float(results["exp1_rlb_reject_rate"][0]) * 100.0
     rej2 = float(results["exp2_rlb_reject_rate_main"][0]) * 100.0
     rej3 = float(results["exp3_rlb_reject_rate_main"][0]) * 100.0
@@ -286,14 +289,15 @@ def export_latex_summary_table(
         [
             "\\bottomrule",
             "\\end{tabular}",
-            "\\caption{Empirical cumulative pseudo-regret $R_n$ at horizon $n = 6{,}000$ (mean $\\pm$ standard error across $20$ Monte Carlo trials) across the three misspecification regimes.}",
+            f"\\caption{{Empirical cumulative pseudo-regret $R_n$ at horizon $n={horizon:,}$ "
+            f"(mean $\\pm$ standard error across {n_seeds} Monte Carlo trials) across "
+            "three synthetic misspecification regimes. All four methods use empirical settings.}",
             "\\label{tab:empirical_regret}",
             "\\end{table}",
         ]
     )
 
-    with open(out_tex_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
+    atomic_write_text(Path(out_tex_path), "\n".join(lines) + "\n")
 
 
 def _run_experiment_3b_sweep(
@@ -301,18 +305,16 @@ def _run_experiment_3b_sweep(
     horizon_sweep: int,
     n_seeds_sweep: int,
 ) -> None:
-    """
-    Execute [6/6] Experiment 3b: Sweep across rho in [0.05, 0.60] using the consistent
-    `skew_suboptimal_bias=False` rho-GAM geometry so Panel 3(b) at rho = 0.30 matches
-    Panel 3(a) at t = 4,000.
-    """
+    """Run a paired rho sweep, holding feature/noise seeds fixed across rho levels."""
     print("[6/6] Running Experiment 3b: Sweep across rho in [0.05, 0.60]...")
     rho_grid = np.array([0.05, 0.15, 0.25, 0.35, 0.45, 0.52, 0.60], dtype=np.float64)
     results["exp3_rho_grid"] = rho_grid
     results["exp3_eps_linf_grid"] = np.zeros(len(rho_grid), dtype=np.float64)
     results["exp3_rlb_reject_rate_sweep"] = np.zeros(len(rho_grid), dtype=np.float64)
+    results["exp3_rlb_reject_trials"] = np.zeros((len(rho_grid), n_seeds_sweep), dtype=np.int8)
     for name in ALGORITHM_NAMES:
         results[f"exp3_sweep_{name}_mean"] = np.zeros(len(rho_grid), dtype=np.float64)
+        results[f"exp3_sweep_{name}_trials"] = np.zeros((len(rho_grid), n_seeds_sweep), dtype=np.float64)
         results[f"exp3_sweep_{name}_se"] = np.zeros(len(rho_grid), dtype=np.float64)
 
     for idx_r, rho_val in enumerate(rho_grid):
@@ -327,7 +329,7 @@ def _run_experiment_3b_sweep(
         )
         results["exp3_eps_linf_grid"][idx_r] = sample_env.diagnostics()["eps_linf"]
 
-        _, mr, ser, rej_r = simulate_trajectories(
+        _, mr, ser, rej_r, raw, rej_flags = simulate_trajectories(
             env_factory=lambda s, rv=float(rho_val): make_gap_adjusted_env(
                 k=40,
                 d=5,
@@ -340,11 +342,14 @@ def _run_experiment_3b_sweep(
             horizon=horizon_sweep,
             n_seeds=n_seeds_sweep,
             subsample_step=horizon_sweep,
-            base_seed=5000 + 90 * idx_r,
+            base_seed=5000,  # fixed geometry and noise streams across rho levels
+            return_raw=True,
         )
         results["exp3_rlb_reject_rate_sweep"][idx_r] = rej_r
+        results["exp3_rlb_reject_trials"][idx_r] = rej_flags
         for name in ALGORITHM_NAMES:
             results[f"exp3_sweep_{name}_mean"][idx_r] = mr[name][-1]
+            results[f"exp3_sweep_{name}_trials"][idx_r] = raw[name][:, -1]
             results[f"exp3_sweep_{name}_se"][idx_r] = ser[name][-1]
 
 
@@ -355,32 +360,68 @@ def main() -> None:
     parser.add_argument(
         "--quick",
         action="store_true",
-        help="Run a fast 5-seed evaluation (default: 20 seeds).",
+        help="Use short-horizon, 3-seed defaults and isolated quick output paths.",
+    )
+    parser.add_argument("--seeds-main", type=int, default=None)
+    parser.add_argument("--seeds-sweep", type=int, default=None)
+    parser.add_argument("--horizon-main", type=int, default=None)
+    parser.add_argument("--horizon-sweep", type=int, default=None)
+    parser.add_argument(
+        "--output-dir", type=Path, default=None,
+        help="Directory for result NPZ and TeX (quick runs default to experiments/quick).",
+    )
+    parser.add_argument(
+        "--overwrite", action="store_true",
+        help="Explicitly authorize replacement of existing result files.",
     )
     parser.add_argument(
         "--only-exp3b",
         action="store_true",
-        help="Only recompute [6/6] Experiment 3b into existing results_summary.npz (~15s).",
+        help="Repeat rho sweep only if the complete source, seeds and archive metadata match.",
     )
     args = parser.parse_args()
 
-    n_seeds_main = 5 if args.quick else 20
-    n_seeds_sweep = 5 if args.quick else 15
-    horizon_main = 6000
-    horizon_sweep = 4000
-
-    npz_path = os.path.join("experiments", "results_summary.npz")
-    tex_path = os.path.join("experiments", "table_results.tex")
+    n_seeds_main = args.seeds_main if args.seeds_main is not None else (3 if args.quick else 20)
+    n_seeds_sweep = args.seeds_sweep if args.seeds_sweep is not None else (3 if args.quick else 15)
+    horizon_main = args.horizon_main if args.horizon_main is not None else (600 if args.quick else 6000)
+    horizon_sweep = args.horizon_sweep if args.horizon_sweep is not None else (400 if args.quick else 4000)
+    if min(n_seeds_main, n_seeds_sweep, horizon_main, horizon_sweep) <= 0:
+        parser.error("all seed counts and horizons must be positive")
+    out_dir = args.output_dir or Path("experiments") / ("quick" if args.quick else ".")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    npz_path = out_dir / "results_summary.npz"
+    tex_path = out_dir / "table_results.tex"
 
     start_time = time.time()
 
-    if args.only_exp3b and os.path.exists(npz_path):
+    if args.only_exp3b and not npz_path.exists():
+        parser.error("--only-exp3b requires an existing complete archive")
+    if (npz_path.exists() or tex_path.exists()) and not args.overwrite:
+        parser.error("Existing output detected; use a new --output-dir or explicit --overwrite")
+
+    if args.only_exp3b and npz_path.exists():
         print("=" * 84)
-        print("Updating ONLY [6/6] Experiment 3b in existing experiments/results_summary.npz...")
+        print(f"Updating ONLY [6/6] Experiment 3b in {npz_path}...")
         print("=" * 84)
-        results: Dict[str, np.ndarray] = dict(np.load(npz_path, allow_pickle=False))
+        with np.load(npz_path, allow_pickle=False) as previous:
+            results: Dict[str, np.ndarray] = dict(previous)
+        try:
+            verify_provenance(results, require_runtime=True)
+        except ValueError as exc:
+            parser.error(str(exc))
+        for key in ("meta_complete", "meta_main_seeds", "meta_main_horizon", "meta_sweep_horizon", "meta_sweep_seeds", "meta_method_names"):
+            if key not in results:
+                parser.error(f"--only-exp3b requires matching metadata key: {key}")
+        if (int(results["meta_complete"][0]) != 1
+            or int(results["meta_main_seeds"][0]) != n_seeds_main
+            or int(results["meta_main_horizon"][0]) != horizon_main
+            or int(results["meta_sweep_horizon"][0]) != horizon_sweep
+            or int(results["meta_sweep_seeds"][0]) != n_seeds_sweep
+            or list(results["meta_method_names"]) != ALGORITHM_NAMES):
+            parser.error("Existing archive is incompatible with current methods, horizon, or seed settings")
         _run_experiment_3b_sweep(results, horizon_sweep, n_seeds_sweep)
-        np.savez_compressed(npz_path, **results)
+        results["meta_sweep_seeds"] = np.array([n_seeds_sweep], dtype=int)
+        atomic_savez(npz_path, results)
         export_latex_summary_table(results, tex_path)
         elapsed = time.time() - start_time
         print(f"Updated {npz_path} in {elapsed:.1f} seconds.")
@@ -393,19 +434,32 @@ def main() -> None:
     )
     print("=" * 84)
 
-    results = {}
+    results: Dict[str, np.ndarray] = {
+        "meta_complete": np.array([1], dtype=np.int8),
+        "meta_main_seeds": np.array([n_seeds_main], dtype=np.int64),
+        "meta_sweep_seeds": np.array([n_seeds_sweep], dtype=np.int64),
+        "meta_main_horizon": np.array([horizon_main], dtype=np.int64),
+        "meta_sweep_horizon": np.array([horizon_sweep], dtype=np.int64),
+        "meta_method_names": np.asarray(ALGORITHM_NAMES, dtype=str),
+        "meta_python_version": np.asarray([sys.version.split()[0]]),
+        "meta_numpy_version": np.asarray([np.__version__]),
+    }
+    results.update(provenance_fields())
 
     print("[1/6] Running Experiment 1a: Realizable Linear Bandit trajectories...")
-    t_grid, m1, se1, rlb_rej1 = simulate_trajectories(
+    t_grid, m1, se1, rlb_rej1, raw1, rej_flags1 = simulate_trajectories(
         env_factory=lambda s: make_realizable_env(k=50, d=5, sigma=0.25, seed=s),
         horizon=horizon_main,
         n_seeds=n_seeds_main,
         base_seed=100,
+        return_raw=True,
     )
     results["t_grid"] = t_grid
     results["exp1_rlb_reject_rate"] = np.array([rlb_rej1])
+    results["exp1_rlb_reject_trials"] = rej_flags1
     for name in ALGORITHM_NAMES:
         results[f"exp1_traj_{name}_mean"] = m1[name]
+        results[f"exp1_traj_{name}_trials"] = raw1[name]
         results[f"exp1_traj_{name}_se"] = se1[name]
 
     print("[2/6] Running Experiment 1b: Scaling across arm count k in {10..200}...")
@@ -413,10 +467,11 @@ def main() -> None:
     results["exp1_k_grid"] = k_grid
     for name in ALGORITHM_NAMES:
         results[f"exp1_ksweep_{name}_mean"] = np.zeros(len(k_grid), dtype=np.float64)
+        results[f"exp1_ksweep_{name}_trials"] = np.zeros((len(k_grid), n_seeds_sweep), dtype=np.float64)
         results[f"exp1_ksweep_{name}_se"] = np.zeros(len(k_grid), dtype=np.float64)
 
     for idx_k, k_val in enumerate(k_grid):
-        _, mk, sek, _ = simulate_trajectories(
+        _, mk, sek, _, raw_k, _ = simulate_trajectories(
             env_factory=lambda s, kv=int(k_val): make_realizable_env(
                 k=kv, d=5, sigma=0.25, seed=s
             ),
@@ -424,60 +479,73 @@ def main() -> None:
             n_seeds=n_seeds_sweep,
             subsample_step=horizon_sweep,
             base_seed=500 + 50 * idx_k,
+            return_raw=True,
         )
         for name in ALGORITHM_NAMES:
             results[f"exp1_ksweep_{name}_mean"][idx_k] = mk[name][-1]
+            results[f"exp1_ksweep_{name}_trials"][idx_k] = raw_k[name][:, -1]
             results[f"exp1_ksweep_{name}_se"][idx_k] = sek[name][-1]
 
     print("[3/6] Running Experiment 2a: Sparse Misspecified Bandit trajectories...")
-    _, m2, se2, rlb_rej2 = simulate_trajectories(
+    _, m2, se2, rlb_rej2, raw2, rej_flags2 = simulate_trajectories(
         env_factory=lambda s: make_ghosh_sparse_misspecified_env(
             k=20, d=5, sigma=0.25, eps_sparse=0.45, permute_arms=True, seed=s
         ),
         horizon=horizon_main,
         n_seeds=n_seeds_main,
         base_seed=2000,
+        return_raw=True,
     )
     results["exp2_rlb_reject_rate_main"] = np.array([rlb_rej2])
+    results["exp2_rlb_reject_trials"] = rej_flags2
     for name in ALGORITHM_NAMES:
         results[f"exp2_traj_{name}_mean"] = m2[name]
+        results[f"exp2_traj_{name}_trials"] = raw2[name]
         results[f"exp2_traj_{name}_se"] = se2[name]
 
     print("[4/6] Running Experiment 2b: Phase transition across eps_k in [0.0, 0.50]...")
     eps_grid = np.array([0.00, 0.10, 0.20, 0.28, 0.35, 0.42, 0.50], dtype=np.float64)
     results["exp2_eps_grid"] = eps_grid
     results["exp2_rlb_reject_rate"] = np.zeros(len(eps_grid), dtype=np.float64)
+    results["exp2_rlb_reject_trials_sweep"] = np.zeros((len(eps_grid), n_seeds_sweep), dtype=np.int8)
     for name in ALGORITHM_NAMES:
         results[f"exp2_sweep_{name}_mean"] = np.zeros(len(eps_grid), dtype=np.float64)
+        results[f"exp2_sweep_{name}_trials"] = np.zeros((len(eps_grid), n_seeds_sweep), dtype=np.float64)
         results[f"exp2_sweep_{name}_se"] = np.zeros(len(eps_grid), dtype=np.float64)
 
     for idx_e, eps_val in enumerate(eps_grid):
-        _, me, see, rej_e = simulate_trajectories(
+        _, me, see, rej_e, raw_e, rej_flags_e = simulate_trajectories(
             env_factory=lambda s, ev=float(eps_val): make_ghosh_sparse_misspecified_env(
                 k=20, d=5, sigma=0.25, eps_sparse=ev, permute_arms=True, seed=s
             ),
             horizon=horizon_sweep,
             n_seeds=n_seeds_sweep,
             subsample_step=horizon_sweep,
-            base_seed=3000 + 70 * idx_e,
+            base_seed=3000,  # paired across corruption magnitudes
+            return_raw=True,
         )
         results["exp2_rlb_reject_rate"][idx_e] = rej_e
+        results["exp2_rlb_reject_trials_sweep"][idx_e] = rej_flags_e
         for name in ALGORITHM_NAMES:
             results[f"exp2_sweep_{name}_mean"][idx_e] = me[name][-1]
+            results[f"exp2_sweep_{name}_trials"][idx_e] = raw_e[name][:, -1]
             results[f"exp2_sweep_{name}_se"][idx_e] = see[name][-1]
 
     print("[5/6] Running Experiment 3a: rho-GAM Bandit trajectories (rho = 0.30)...")
-    _, m3, se3, rlb_rej3 = simulate_trajectories(
+    _, m3, se3, rlb_rej3, raw3, rej_flags3 = simulate_trajectories(
         env_factory=lambda s: make_gap_adjusted_env(
             k=40, d=5, sigma=0.25, rho=0.30, skew_suboptimal_bias=False, permute_arms=True, seed=s
         ),
         horizon=horizon_main,
         n_seeds=n_seeds_main,
         base_seed=4000,
+        return_raw=True,
     )
     results["exp3_rlb_reject_rate_main"] = np.array([rlb_rej3])
+    results["exp3_rlb_reject_trials_main"] = rej_flags3
     for name in ALGORITHM_NAMES:
         results[f"exp3_traj_{name}_mean"] = m3[name]
+        results[f"exp3_traj_{name}_trials"] = raw3[name]
         results[f"exp3_traj_{name}_se"] = se3[name]
 
     _run_experiment_3b_sweep(results, horizon_sweep, n_seeds_sweep)
@@ -485,8 +553,7 @@ def main() -> None:
     diag_dict = compute_structural_diagnostics()
     results.update(diag_dict)
 
-    os.makedirs("experiments", exist_ok=True)
-    np.savez_compressed(npz_path, **results)
+    atomic_savez(npz_path, results)
     export_latex_summary_table(results, tex_path)
 
     elapsed = time.time() - start_time

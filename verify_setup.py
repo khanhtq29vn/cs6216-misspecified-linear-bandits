@@ -1,5 +1,5 @@
 """
-Fast sanity-check script for CS6216 Group 13a codebase.
+Small deterministic smoke evaluation for the CS6216 bandit codebase.
 
 Verifies:
 1. Kiefer-Wolfowitz G-optimal design convergence on random arm sets (`OptimalDesignResult`).
@@ -49,7 +49,7 @@ def main() -> None:
     rng = np.random.default_rng(0)
     X_test = rng.normal(size=(30, 5))
     X_test /= np.linalg.norm(X_test, axis=1, keepdims=True)
-    design_res = compute_g_optimal_design(X_test)
+    design_res = compute_g_optimal_design(X_test, tol=1e-3)
     support_size = int(np.sum(design_res.pi > 1e-4))
     print(
         f"[Check 1] G-Optimal Design (k=30, d=5): max_x ||x||_{{V(pi)^+}}^2 = "
@@ -93,7 +93,7 @@ def main() -> None:
             print(f"     * {learner.name:<38} : R_{horizon} = {cum_regret:7.2f}{extra_info}")
         print("-" * 82)
 
-    print("All verification checks completed successfully!")
+    print("Smoke evaluation completed; statistical regret bounds are not tested here.")
 
 
 if __name__ == "__main__":

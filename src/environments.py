@@ -1,26 +1,8 @@
-"""
-Stochastic Linear Bandit Environments across Three Model Misspecification Regimes.
+"""Synthetic finite-action reward environments for misspecified linear bandits.
 
-Strictly implements and mathematically verifies the three regimes studied in
-Sections 2, 3, 4, and 5 of our CS6216 Lecture Notes (`main.tex`):
-
-1. Regime 1 — Exact Linear Realizability (Section 2; Li et al., 2010; Abbasi-Yadkori et al., 2011):
-       f_0(x_i) = <x_i, theta^*>,   eps_i = 0  for all i in {0, ..., k-1}.
-
-2. Regime 2 — Sparse Subspace Misspecification (Section 3.2; Ghosh, Chowdhury, & Gopalan, AAAI 2017):
-       f_0(x_i) = <x_i, theta^*> + eps_i.
-   Constructed according to Theorem 1 of Ghosh et al. (2017): d arms form the canonical
-   orthonormal basis e_1, ..., e_d with zero error (eps_i = 0) and ordered linear means
-   theta^* = (0.70, 0.45, 0.35, 0.30, 0.25)^T (for d = 5). A corrupted arm x_{corr} lies
-   in span(e_1, e_2) with shrinkage coordinates (alpha_1 + alpha_2 < 1) so its linearly
-   extrapolated reward is mu_{corr}^{lin} = 0.485 < theta_1^* = 0.70, and carries a sparse
-   deviation eps_k > 0.215 making it the unique true optimal arm.
-
-3. Regime 3 — rho-Gap-Adjusted Misspecification (Section 4; Liu, Qiao, Yin, Bogunovic, & Wang, 2025):
-       max_{x in X} f_{w^*}(x) = f^*   and   |f_{w^*}(x_i) - f_0(x_i)| <= rho * (f^* - f_0(x_i))
-   for all x_i in X and rho in [0, 1). Automatically verifies Definition 4.1 and
-   Proposition 4.2 (Multiplicative Gap Sandwiching and Exact Optimality Preservation
-   across all arms, including optimal arms) upon initialization.
+All rewards use f0(x) = <x, theta_star> + eps(x) with Gaussian feedback
+noise. The sparse and gap-adjusted constructions are teaching benchmarks;
+they are not reproductions of the source papers' lower-bound instances.
 """
 
 from __future__ import annotations
@@ -280,9 +262,7 @@ class LinearBanditEnvironment:
         return reward, inst_regret
 
     def diagnostics(self) -> EnvironmentDiagnostics:
-        """
-        Compute comprehensive mathematical diagnostics of the environment.
-        """
+        """Compute deterministic structural metrics for the finite arm set."""
         atol = 1e-10
         eps_linf = float(np.max(np.abs(self._misspecification)))
         f_star = self._optimal_mean
@@ -417,12 +397,17 @@ def make_ghosh_sparse_misspecified_env(
     permute_arms: bool = True,
     seed: int = 42,
 ) -> LinearBanditEnvironment:
+    """Construct one-arm additive corruption with a hidden-optimum geometry.
+
+    This is a finite synthetic illustration inspired by Ghosh et al. (2017),
+    not their algorithm-independent change-of-measure lower-bound instance.
     """
-    Construct Regime 2: Sparse Subspace Misspecification (Theorem 1 of Ghosh et al., AAAI 2017;
-    Theorem 3.2 and Equations (11)-(12) in Section 5.1 of `main.tex`).
-    """
+    if not np.isfinite(eps_sparse):
+        raise ValueError("eps_sparse must be finite")
+    if not np.isfinite(alpha_1) or not np.isfinite(alpha_2):
+        raise ValueError("alpha_1 and alpha_2 must be finite")
     if d < 2:
-        raise ValueError(f"Ghosh counterexample requires d >= 2, got d={d}.")
+        raise ValueError(f"Sparse construction requires d >= 2, got d={d}.")
     if k < d + 1:
         raise ValueError(f"k must be at least d + 1 = {d + 1}, got k={k}.")
     if alpha_1 + alpha_2 >= 1.0 or alpha_1 <= 0.0 or alpha_2 < 0.0:
@@ -480,30 +465,12 @@ def make_gap_adjusted_env(
     permute_arms: bool = True,
     seed: int = 42,
 ) -> LinearBanditEnvironment:
-    """
-    Construct Regime 3: rho-Gap-Adjusted Misspecification (Definition 4.1 & Equation (13)
-    in Section 5.1 of `main.tex`; Liu, Qiao, Yin, Bogunovic, & Wang, 2025).
+    """Build a finite model satisfying pure rho-gap-adjusted misspecification.
 
-    Mathematical Properties:
-    - Standard benchmark (`skew_suboptimal_bias=False`):
-      * Unique optimal arm x^* = w^* = e_1 with f^* = 1.0 and eps(x^*) = 0.
-      * Basis arm x_1 along +e_2 has <x_1, w^*> = -31/60 and unit norm 1.0, while
-        companion diagnostic arm x_2 along -e_2 has norm 0.95 (guaranteeing
-        ||c_2||_2 = 1.365 is strictly maximal so RLB tests x_2 and rejects H_0 in 100% of trials!).
-      * At rho = 0.30, global sup-norm error is ||eps||_inf = 0.3500.
-    - High-rho directional skew benchmark (`skew_suboptimal_bias=True`):
-      * Satisfies 100% of the exact rho-GAM invariants (Definition 4.1 & Proposition 4.2).
-      * Optimal arm x^* = 0.55 e_1 (f^* = 0.55, eps(x^*) = 0, norm = 0.55).
-      * Near-optimal competitor cluster (6 arms) near x_c = 0.50 e_1 + 0.866 e_2 (unit norm 1.0)
-        has small linear gap Delta_c^{lin} = 0.05 and s_c = -1, so its true gap is
-        Delta_c = 0.05 / (1 - rho) (growing to 0.125 at rho = 0.60) and eps_c = -rho * Delta_c.
-      * High-gap exploratory cluster (22 arms) near -0.45 e_1 + 0.89 e_2 (unit norm 1.0)
-        carries positive misspecification eps_j = +rho * Delta_j > 0 along +e_2.
-        In adaptive LinUCB, early pulls across these 22 arms inject persistent positive bias
-        into theta_hat_{t,2} inside the unreset Gram matrix V_{t-1}, inflating the ridge
-        prediction <x_c, theta_hat_t> above <x^*, theta_hat_t> as rho increases into [0.35, 0.60].
-        In contrast, G-Optimal Phased Elimination purges the high-gap arms after Phase 1
-        and balances +e_2 against -e_2, remaining flat across rho in [0.05, 0.60]!
+    Rewards are constructed from surrogate gaps by selecting signs s_i and
+    solving true_gap_i = surrogate_gap_i / (1 + s_i * rho).
+    The invariant checks in LinearBanditEnvironment certify the resulting
+    finite instance. ``skew_suboptimal_bias`` selects an alternate geometry.
     """
     if not (0.0 <= rho < 1.0):
         raise ValueError(f"rho-GAM parameter rho must lie in [0, 1), got {rho}.")
@@ -511,6 +478,8 @@ def make_gap_adjusted_env(
         raise ValueError(f"make_gap_adjusted_env requires d >= 2, got d={d}.")
     if k <= d:
         raise ValueError(f"k must exceed d={d}, got k={k}.")
+    if skew_suboptimal_bias and k < 6:
+        raise ValueError("Skewed construction needs at least six arms")
 
     rng = np.random.default_rng(seed)
     w_star = np.zeros(d, dtype=np.float64)
@@ -518,7 +487,10 @@ def make_gap_adjusted_env(
     features = np.zeros((k, d), dtype=np.float64)
 
     if not skew_suboptimal_bias:
-        features[0] = w_star.copy()  # Unique optimal arm x^* = e_1 (f^* = 1.0, norm = 1.0)
+        # Scale expected rewards so all true reward gaps stay <= 1 throughout
+        # the rho sweep (Assumption 5 in Liu et al., 2025).
+        w_star[0] = 0.65
+        features[0, 0] = 1.0
 
         c1_max_err = -31.0 / 60.0
         features[1, 0] = c1_max_err
@@ -559,12 +531,12 @@ def make_gap_adjusted_env(
                 features[arm_idx, 1] = rad
 
         linear_means = features @ w_star
-        f_star = float(linear_means[0])  # 1.0
+        f_star = float(linear_means[0])  # 0.65
         linear_gaps = f_star - linear_means
 
         misspecification = np.zeros(k, dtype=np.float64)
         for i in range(1, k):
-            if i < num_basis_arms or float(linear_gaps[i]) > 0.75:
+            if i < num_basis_arms or float(linear_gaps[i]) > 0.35:
                 s_i = 1.0
             else:
                 s_i = 1.0 if (i % 2 == 1) else -1.0
