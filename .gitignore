@@ -231,3 +231,6 @@ figures/runs/
 
 # Local IDE configuration (not part of research artifacts)
 .idea/
+
+# macOS Finder metadata
+.DS_Store

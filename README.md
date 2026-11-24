@@ -1,125 +1,107 @@
-**CS6216 · Sequential Decision Making · NUS · Group 13a**
-Tran Quoc Khanh and Nurmukhammed Aitymbetov
-This repository provides synthetic finite-action bandit environments, four numerical
-policies, deterministic tests, and a multi-seed Monte Carlo evaluation pipeline.
-The experiment implementations are distinguished from the theoretical algorithms
-in the papers discussed in our lecture notes.
-## Scope and mathematical model
-An arm with feature vector `x` has expected reward
-`f0(x) = x @ theta_star + epsilon(x)`.
-The experiments compare:
-| Policy name in generated output | Implementation |
+# Contextual and Linear Bandits under Model Misspecification
+
+**CS6216 — Advanced Topics in Machine Learning, National University of Singapore · Group 13a**
+Tran Quoc Khanh · Nurmukhammed Aitymbetov
+
+This repository contains finite-action stochastic bandit implementations, three synthetic reward models, deterministic and regression tests, and a reproducible Monte Carlo benchmark. It accompanies our lecture notes on linear bandits under model misspecification.
+
+## Model and algorithms
+
+At each round, the expected reward of feature vector $x$ is
+
+$$f_0(x)=\langle x,\theta^*\rangle+\varepsilon(x),$$
+
+with additive Gaussian feedback noise in the simulations. Pseudo-regret is accumulated relative to the highest *true* expected reward in the current fixed action set.
+
+| Implementation | Description |
 | --- | --- |
-| `Standard UCB` | Unstructured UCB with Gaussian/sub-Gaussian-width bonus |
-| `LinUCB (scaled OFUL)` | Shared-feature ridge optimism with confidence multiplier `0.60` |
-| `Basis-test RLB variant` | Fixed-basis linearity screen using up to three diagnostic arms, followed by an optimistic linear policy or unstructured UCB |
-| `Design-based PE (phase-local)` | New G-optimal allocation in each phase, phase-local OLS, geometrically increasing phase budgets, and noise-calibrated elimination |
-**Comparison with the literature.** The LinUCB confidence multiplier is tuned for
-simulation; it is not the confidence radius in Theorem 9 of Liu et al. The
-basis-screening policy is not Algorithm 1 of Ghosh et al.: it does not enforce
-the non-sparse-deviation/coverage conditions needed for the original guarantee.
-The PE implementation fits each phase independently, but its empirical sample
-schedule and elimination threshold are not the theorem-calibrated Algorithm 2
-of Liu et al. The latter uses a factor `16` with a particular confidence
-convention and sample schedule. Changing only `elimination_multiplier` to `16`
-does not make these code paths equivalent.
-The synthetic regimes are:
-1. **Realizable:** zero approximation error and a unique best arm.
-2. **Sparse corruption:** one arm receives an additive reward perturbation,
-   illustrating the hidden-optimum failure of optimistic linear extrapolation.
-3. **Pure rho-GAM:** pointwise errors satisfy
-   `abs(epsilon(x)) <= rho * (f_star - f0(x))`, checked arm-by-arm during
-   construction. On the standard rho sweep `0 <= rho <= 0.60`, all expected
-   reward gaps are at most `1`, matching the bounded-gap normalization used
-   in Liu et al.'s Assumption 5.
-The hand-constructed synthetic action sets are illustrative, not a random sample of
-all realizable, sparse or gap-adjusted problems. Their parameter choices were
-fixed in source before the new benchmark is run; one cannot infer universal
-algorithm rankings from these instances. No settings should be selected after
-examining the benchmark outputs without documenting a new experimental version.
-The experiment's `rho = 0.30` is **outside** the sufficient theorem range
-`rho <= 1/(16*sqrt(d))` for the modified PE in Liu et al. Finite-horizon
-figures do not establish asymptotic regret results.
-## Reproducible setup
-Run commands from the repository root with Python 3.11 or later:
+| **Standard UCB** | Unstructured $k$-armed UCB, using each arm's own empirical reward mean. |
+| **LinUCB (scaled OFUL)** | Shared-parameter ridge regression with an optimistic exploration bonus; the simulation uses `confidence_scale=0.60`. |
+| **Basis-test RLB variant** | Tests linear consistency on a selected basis and up to three diagnostic arms, then runs a linear learner or unstructured UCB. |
+| **Design-based PE (phase-local)** | Recomputes an approximate $G$-optimal allocation on each active set, interleaves support-arm pulls in feature-based order, estimates rewards using that phase's observations, and applies elimination. |
+
+The implementations are experimental policies, not exact replicas of all theorem-calibrated algorithms in the cited papers. In particular, a fixed-basis RLB screen does not satisfy the general coverage assumption of Ghosh et al.'s Algorithm 1, and the empirical PE phase schedule and elimination multiplier `2.0` differ from Algorithm 2 in Liu et al. Merely changing its multiplier to `16` would not make the implementation theorem-equivalent.
+
+## Experimental regimes
+
+1. **Realizable:** $\varepsilon(x)=0$ for every arm; $k=50$, $d=5$ in the main benchmark.
+2. **Sparse corruption:** one arm receives an additive perturbation of `0.45`; $k=20$, $d=5$ in the main benchmark. The geometry illustrates how a truly optimal corrupted arm can be overlooked by shared linear optimism.
+3. **Pure $\rho$-gap-adjusted misspecification:** the environment checks $|\varepsilon(x)|\leq\rho(f^*-f_0(x))$ for every arm; $\rho=0.30$, $k=40$, $d=5$ in the main benchmark. The standard parameter sweep also enforces a maximum expected-reward gap of at most one.
+
+These hand-constructed synthetic instances illustrate distinct mechanisms. They are not a representative sample of all bandit instances. Moreover, $\rho=0.30$ is outside the sufficient condition $\rho\leq 1/(16\sqrt d)$ for the modified PE algorithm analyzed by Liu et al.; its theorem cannot be inferred from the observed performance of the empirical PE variant.
+
+## Reproducing the experiments
+
+From the repository root, with Python 3.11 or later:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
 python verify_setup.py
-An end-to-end **small smoke run** with isolated outputs:
+```
 
+A quick pipeline smoke test (isolated outputs, not a substitute for the full Monte Carlo experiment):
+
+```bash
 python -m experiments.run_experiments --quick \
-  --seeds-main 1 --seeds-sweep 1 \
-  --horizon-main 30 --horizon-sweep 20 \
   --output-dir experiments/quick/smoke
 MPLBACKEND=Agg python -m experiments.plot_results \
   --input experiments/quick/smoke/results_summary.npz \
   --output-dir figures/quick/smoke
-Run the **full benchmark** (main: 20 seeds × 6,000 rounds;
-secondary sweeps: 15 seeds × 4,000 rounds) and generate figures:
-
-MPLBACKEND=Agg python -m experiments.plot_results
 ```
 
-To rerun only the three main regimes (without auxiliary sweeps), use
-`python -m experiments.run_main_only`. It writes a distinct, incomplete
-archive in `experiments/main_only/`, and never masquerades as a full run.
+To regenerate the **full benchmark** with the prespecified design (20 seeds and 6,000 rounds in each main comparison; 15 seeds and 4,000 rounds in the parameter sweeps):
 
-The default full run writes `experiments/results_summary.npz`,
-`experiments/table_results.tex`, and eight PDF/PNG figure files in `figures/`.
-The `--quick` switch defaults to three seeds and short horizons
-(600 main rounds, 400 sweep rounds), writes to `experiments/quick/`, and
-does not overwrite full outputs. Command-line overrides allow reproducibility checks
-with smaller seed counts and horizons; the output table reads these values
-from the archive rather than hardcoding them. The `--only-exp3b` mode additionally checks the exact source SHA-256 digest,
-seed protocol, version and experiment settings. It rejects historical archives
-or archives from another source revision rather than mixing outputs. Existing
-numerical outputs and figures are never silently replaced: use a fresh
-`--output-dir` or an explicit `--overwrite` after preserving previous results.
+```bash
+python -m experiments.run_experiments \
+  --seeds-main 20 --seeds-sweep 15 \
+  --horizon-main 6000 --horizon-sweep 4000 \
+  --output-dir experiments/runs/reproduction
+MPLBACKEND=Agg python -m experiments.plot_results \
+  --input experiments/runs/reproduction/results_summary.npz \
+  --output-dir figures/runs/reproduction
+```
 
-**Timing:** The complete multi-seed, multi-sweep experiment can be costly on
-laptops. Small smoke runs test pipeline integrity, not statistical precision.
-The two main and sweep seed counts are intentionally different.
+The runner refuses to overwrite existing outputs unless `--overwrite` is explicitly specified. The parameter sweeps pair environment/noise seeds across parameter values *within a policy*; noise streams differ across policies. Outputs include raw trial-level regret trajectories, rejection flags, summary statistics and source/runtime metadata. Exact floating-point trajectories can vary between runtimes near action-selection ties; the recorded benchmark used Python `3.15.0` and NumPy `2.5.4`.
 
-## Data lineage
+## Recorded full benchmark
 
-The uploaded source archive contained a numerical result table, NPZ, and
-figures generated by an earlier algorithm implementation. These are retained
-without modification under `experiments/archive/2026-10-29/` and are **not**
-outputs of the revised code. See
-[`experiments/archive/2026-10-29/ORIGIN.md`](experiments/archive/2026-10-29/ORIGIN.md).
+The source commit for the benchmark below is `e0f9c4f` (source fingerprint `ab98055b5090fd2d0454a58b85b92c56f37f09bf4985f8183db97598d551d1ba`). Values are **mean cumulative pseudo-regret ± standard error** over 20 Monte Carlo trials, at $n=6000$.
 
-Fresh results are deliberately absent from the source package until the
-corresponding benchmark command is executed. The archive contains metadata
-for seed counts, horizons, method identifiers, Python/NumPy versions and Git
-revision (when available). Individual noise streams use deterministic NumPy random generators with
-documented seeds. The epsilon and rho sweeps use the **same trial seeds at
-every parameter level**, so the feature geometry, arm permutation and noise
-streams are paired; only the investigated model parameter changes. Different
-algorithms currently use independent noise streams. The NPZ also stores raw
-per-trial regret trajectories/final regret values and RLB rejection indicators
-so every mean, standard error and parameter-level comparison can be audited
-without re-running the experiment. The archive records a source SHA-256,
-seed-protocol version, Git worktree state, and runtime versions; raw NPZ
-files and command logs should be retained alongside any published results.
+| Algorithm | Realizable | Sparse corruption | $\rho$-GAM ($\rho=0.30$) |
+| --- | ---: | ---: | ---: |
+| Standard UCB | 174.7 ± 3.4 | 44.0 ± 0.9 | 111.4 ± 1.7 |
+| LinUCB (scaled OFUL) | 46.9 ± 1.2 | 1432.6 ± 0.7 | 25.0 ± 0.8 |
+| Basis-test RLB variant | 60.6 ± 1.0 | 103.2 ± 0.7 | 141.5 ± 8.9 |
+| Design-based PE (phase-local) | 1260.5 ± 9.7 | 1657.3 ± 76.2 | 898.8 ± 42.5 |
 
-## Repository layout
+RLB rejected its diagnostic null hypothesis on **0/20**, **20/20**, and **16/20** trials, respectively. The substantial PE regret, including in the realizable instance, is part of the recorded outcome. Its empirical sample schedule and exploration costs should not be conflated with the guarantees of a differently calibrated PE algorithm.
 
-```text
-src/                 Policies, reward environments, optimal design utilities
-experiments/         Runner, TeX table generator, figure generator
-experiments/archive/ Historical benchmark outputs with provenance
-figures/             Generated figures (populated after a run)
-tests/               Unit and regression tests
-.github/workflows/   Continuous integration smoke checks
-docs/                Model contracts and change-impact register
-verify_setup.py      Deterministic numerical smoke evaluation
+The exact results, generated LaTeX table, plots and a file-hash manifest are preserved in [`experiments/archive/2026-11-24_interleaved_e0f9c4f/`](experiments/archive/2026-11-24_interleaved_e0f9c4f/). Figures: [realizable](experiments/archive/2026-11-24_interleaved_e0f9c4f/figures/fig1_realizable_benchmark.pdf), [sparse corruption](experiments/archive/2026-11-24_interleaved_e0f9c4f/figures/fig2_ghosh_sparse_misspec.pdf), [$\rho$-GAM](experiments/archive/2026-11-24_interleaved_e0f9c4f/figures/fig3_liu_gam_benchmark.pdf), and [structural diagnostics](experiments/archive/2026-11-24_interleaved_e0f9c4f/figures/fig4_structural_diagnostics.pdf). Plot bands and sweep error bars display **one standard error**, not 95% confidence intervals. The arm-count sweep compares constructed instances for each $k$, so it does not isolate action count from geometry.
 
-## Primary literature
+Prior numerical artifacts are retained separately under [`experiments/archive/2026-10-29/`](experiments/archive/2026-10-29/) and [`experiments/archive/2026-11-24_pre_order/`](experiments/archive/2026-11-24_pre_order/); neither should be treated as outputs of the final interleaved PE implementation.
 
-- Li, Chu, Langford & Schapire (2010), [Contextual-Bandit News Recommendation](https://arxiv.org/abs/1003.0146).
+## Repository structure
+
+| Path | Contents |
+| --- | --- |
+| `src/` | Policies, environments and optimal-design utilities |
+| `experiments/` | Monte Carlo runners, provenance, table and figure generation |
+| `experiments/archive/` | Versioned historical and final numerical artifacts |
+| `tests/` | Unit and research-integrity regression tests |
+| `docs/` | Mathematical contracts and change history |
+| `.github/workflows/` | Automated tests and pipeline smoke checks |
+| `verify_setup.py` | Deterministic environment/algorithm smoke evaluation |
+
+## References
+
+- Li, Chu, Langford & Schapire (2010), [A Contextual-Bandit Approach to Personalized News Article Recommendation](https://arxiv.org/abs/1003.0146).
 - Abbasi-Yadkori, Pál & Szepesvári (2011), [Improved Algorithms for Linear Stochastic Bandits](https://papers.nips.cc/paper/2011/hash/e1d5be1c7f2f456670de3d53c7b54f4a-Abstract.html).
+- Lattimore & Szepesvári (2020), [Bandit Algorithms](https://tor-lattimore.com/downloads/book/book.pdf).
+- Lattimore, Szepesvári & Weisz (2020), [Learning with Good Feature Representations in Bandits and in RL with a Generative Model](https://proceedings.mlr.press/v119/lattimore20a/lattimore20a.pdf).
 - Ghosh, Chowdhury & Gopalan (2017), [Misspecified Linear Bandits](https://arxiv.org/abs/1704.06880).
-- Lattimore, Szepesvári & Weisz (2020), *Learning with Good Feature Representations in Bandits and in RL with a Generative Model*.
 - Liu, Qiao, Yin, Bogunovic & Wang (2025), [No-Regret Linear Bandits under Gap-Adjusted Misspecification](https://arxiv.org/abs/2501.05361).
 
-MIT license. See [`LICENSE`](LICENSE).
+Software citation metadata is in [`CITATION.cff`](CITATION.cff). Code is distributed under the [MIT License](LICENSE).

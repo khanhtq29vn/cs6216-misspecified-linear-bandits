@@ -1,0 +1,81 @@
+{
+  "benchmark": {
+    "main_horizon": 6000,
+    "main_seeds": 20,
+    "mean_and_standard_error": {
+      "realizable": {
+        "Basis-test RLB variant": {
+          "mean_final_regret": 60.61753124999999,
+          "se_final_regret": 1.036600943560433
+        },
+        "Design-based PE (phase-local)": {
+          "mean_final_regret": 1260.5464687500166,
+          "se_final_regret": 9.729043432784788
+        },
+        "LinUCB (scaled OFUL)": {
+          "mean_final_regret": 46.92262499999997,
+          "se_final_regret": 1.1923690453791052
+        },
+        "Standard UCB": {
+          "mean_final_regret": 174.74681250000006,
+          "se_final_regret": 3.354356245258798
+        }
+      },
+      "rho_gam": {
+        "Basis-test RLB variant": {
+          "mean_final_regret": 141.54022619047606,
+          "se_final_regret": 8.857091840811554
+        },
+        "Design-based PE (phase-local)": {
+          "mean_final_regret": 898.8478904762078,
+          "se_final_regret": 42.547759163836275
+        },
+        "LinUCB (scaled OFUL)": {
+          "mean_final_regret": 24.974509523809495,
+          "se_final_regret": 0.7591227003342633
+        },
+        "Standard UCB": {
+          "mean_final_regret": 111.44868809523828,
+          "se_final_regret": 1.6728526367790242
+        }
+      },
+      "sparse": {
+        "Basis-test RLB variant": {
+          "mean_final_regret": 103.20741175515828,
+          "se_final_regret": 0.6561960591260836
+        },
+        "Design-based PE (phase-local)": {
+          "mean_final_regret": 1657.3094245822588,
+          "se_final_regret": 76.17373146167758
+        },
+        "LinUCB (scaled OFUL)": {
+          "mean_final_regret": 1432.6074999998777,
+          "se_final_regret": 0.6855680990396108
+        },
+        "Standard UCB": {
+          "mean_final_regret": 44.037238719157884,
+          "se_final_regret": 0.8672379243190251
+        }
+      }
+    },
+    "numpy_version": "2.5.4",
+    "python_version": "3.15.0",
+    "source_commit_at_execution": "e0f9c4fe61106872e319599b0911022bc0f7b63e",
+    "source_fingerprint_sha256": "ab98055b5090fd2d0454a58b85b92c56f37f09bf4985f8183db97598d551d1ba",
+    "sweep_horizon": 4000,
+    "sweep_seeds": 15,
+    "worktree_at_execution": "clean"
+  },
+  "files": {
+    "figures/fig1_realizable_benchmark.pdf": "73c1b46034f2b20f5f21e2baa588caad85eb64164e0e55f4991f3334fe3abc3d",
+    "figures/fig1_realizable_benchmark.png": "4f3eb1ebf4e357a22ec0a2ba9c8868feea810610dd2c3c602dd1eb8b4fcd22f3",
+    "figures/fig2_ghosh_sparse_misspec.pdf": "243fb0b93b71d6a23fdc9ae78120689601a3efe84ccce7f198edbe529c1b9167",
+    "figures/fig2_ghosh_sparse_misspec.png": "80e6b33a85ef5bcb03fd33845516536b4164cd82a58962563e0839c70d61d7d9",
+    "figures/fig3_liu_gam_benchmark.pdf": "bc49ba05b5ec910b81c768318edd6882c24b4d5a4e55d5288ea5ab73ea915605",
+    "figures/fig3_liu_gam_benchmark.png": "8fa6bdf93f207f7770e58aee6a48570cdf1f4f2bc49423a5f45cc2d010c634ba",
+    "figures/fig4_structural_diagnostics.pdf": "371a4aaed2d546a56e130d498f43046d21ab7c1e6298a177f0d3dea61a56136b",
+    "figures/fig4_structural_diagnostics.png": "5c13a9231aea6c667fb12fc1291d91d2cf20b28cef606d8d722391e4c90dc83e",
+    "results_summary.npz": "2985941db0a74caf2545c834c48382c9d68fc7b414832777825dc7ef84797398",
+    "table_results.tex": "6c14766f3d47ad142d89c0858b7ca5adf2da262bbb800d097a14337dc4e2c7e8"
+  }
+}
