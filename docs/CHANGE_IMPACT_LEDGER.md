@@ -39,3 +39,23 @@ maximum approximation error `0.35` (revised benchmark has `0.2275`).
 - The source and metadata changes alter **the reproducibility protocol** and
   the parameter-sweep estimates. Neither the theory nor the experiment implies
   uniformly superior performance of any policy.
+
+## Finite-horizon phase ordering correction (post-full-benchmark audit)
+
+The full benchmark run archived under its original SHA-256 fingerprint exposed
+an index-order artifact: the PE implementation drew every allocated sample of
+one support arm before starting the next arm. Large late batches truncated by
+`n=6000` therefore depended strongly on which arm happened to have the lowest
+input index. A controlled experiment holding the physical arms and per-arm
+noise observations fixed produced regrets of 1185.58 and 1430.20 solely from
+arm relabeling.
+
+The candidate fix interleaves already-planned samples in feature-based order.
+No regret bound, sample budget, elimination threshold, reward geometry, seed,
+or fitting formula is changed. New outputs must use a new source fingerprint
+and a fresh full benchmark; the pre-correction NPZ and figure PDFs are
+historical evidence and must not be presented as results from the candidate.
+
+The source SHA-256 contract also now includes the figure-generation source
+`experiments/plot_results.py`; the earlier hash did not. Generated figure PDFs
+must be accompanied by an output artifact manifest if published.

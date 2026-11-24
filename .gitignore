@@ -228,3 +228,6 @@ experiments/main_only/
 experiments/runs/
 figures/quick/
 figures/runs/
+
+# Local IDE configuration (not part of research artifacts)
+.idea/

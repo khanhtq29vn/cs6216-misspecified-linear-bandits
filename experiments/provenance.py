@@ -24,6 +24,7 @@ _SOURCE_FILES = (
     "src/utils.py",
     "experiments/run_experiments.py",
     "experiments/run_main_only.py",
+    "experiments/plot_results.py",
     "experiments/provenance.py",
     "requirements.txt",
 )

@@ -430,7 +430,9 @@ class PhasedEliminationBandit(BanditPolicy):
     """Finite-arm, phase-local, G-optimal-design elimination policy.
 
     Each phase obtains a fresh G-optimal design on the current active set,
-    samples its support, and fits ordinary least squares using observations
+    interleaves its preallocated support-arm samples in a canonical feature
+    order (not by arbitrary arm index), and fits ordinary least squares using
+    observations
     **from that phase only**. Earlier phase data never enters the estimator.
 
     The default threshold multiplier and sample schedule are calibrated for
@@ -545,7 +547,12 @@ class PhasedEliminationBandit(BanditPolicy):
         for local in np.flatnonzero(design.pi > 0.0):
             idx = int(self.active_arms[local])
             self.phase_remaining_pulls[idx] = int(np.ceil(self._current_budget * float(design.pi[local])))
-        self._phase_support = np.flatnonzero(self.phase_remaining_pulls).astype(np.int64)
+        allocated_indices = np.flatnonzero(self.phase_remaining_pulls).astype(np.int64)
+        # Use a feature-based (rather than input-index-based) ordering so an
+        # arbitrary relabeling of arms does not change the sampling schedule.
+        self._phase_support = allocated_indices[
+            _canonical_feature_order(self.features[allocated_indices])
+        ]
         if self._phase_support.size == 0:
             raise RuntimeError("G-optimal allocation produced an empty batch")
 
@@ -588,12 +595,17 @@ class PhasedEliminationBandit(BanditPolicy):
             self._pending_arm = int(self.active_arms[0])
             return self._pending_arm
         while True:
-            while (self._arm_cursor < self._phase_support.size
-                   and self.phase_remaining_pulls[int(self._phase_support[self._arm_cursor])] == 0):
-                self._arm_cursor += 1
-            if self._arm_cursor < self._phase_support.size:
-                self._pending_arm = int(self._phase_support[self._arm_cursor])
-                return self._pending_arm
+            # Interleave the predetermined phase allocation. Pulling all
+            # samples of an index before moving to the next arm biases a
+            # truncated horizon toward the first index in a large batch.
+            support_size = int(self._phase_support.size)
+            for offset in range(support_size):
+                cursor = (self._arm_cursor + offset) % support_size
+                arm = int(self._phase_support[cursor])
+                if self.phase_remaining_pulls[arm] > 0:
+                    self._arm_cursor = (cursor + 1) % support_size
+                    self._pending_arm = arm
+                    return arm
             self._finish_phase_and_eliminate()
             self._start_new_phase()
             if self.active_arms.size == 1:

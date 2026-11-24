@@ -22,7 +22,10 @@ its Gaussian-variance proxy is
 see `test_unexamined_optimal_arm_can_pass_diagnostic_test`.
 
 **Phase-local PE:** A fresh approximate G-optimal design `pi_l` is calculated
-on each active set. Integer counts are the ceiling of `m_l*pi_l`. The current
+on each active set. Integer counts are the ceiling of `m_l*pi_l`. The arms
+are sampled in a deterministic feature-ordered, interleaved schedule within
+each phase; no action is moved to the front because of an arbitrary input index.
+The current
 phase's OLS estimate uses **only** that phase's feature/reward totals.
 The Gram matrix is checked for invertibility on the active feature span.
 A numerical certificate requires `max_x x.T @ M(pi_l)^+ @ x <= 2*r_l`.

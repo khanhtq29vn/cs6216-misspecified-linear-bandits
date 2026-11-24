@@ -11,8 +11,8 @@ from pathlib import Path
 import numpy as np
 
 from src.algorithms import PhasedEliminationBandit, RobustLinearBanditRLB
-from src.environments import make_gap_adjusted_env, make_ghosh_sparse_misspecified_env
-from experiments.provenance import SEED_PROTOCOL, source_fingerprint
+from src.environments import LinearBanditEnvironment, make_realizable_env, make_gap_adjusted_env, make_ghosh_sparse_misspecified_env
+from experiments.provenance import SEED_PROTOCOL, _SOURCE_FILES, source_fingerprint
 from src.utils import compute_g_optimal_design, select_well_conditioned_basis
 from experiments.run_experiments import (
     ALGORITHM_NAMES,
@@ -23,6 +23,54 @@ from experiments.run_experiments import (
 
 
 class TestPhaseLocalEstimation(unittest.TestCase):
+    def test_phase_allocation_is_interleaved(self) -> None:
+        features = np.eye(3)
+        policy = PhasedEliminationBandit(
+            features, sigma=0.25, phase_scale=0.12,
+            eps_init=0.25, elimination_multiplier=2.0,
+        )
+        counts = policy.phase_remaining_pulls.copy()
+        self.assertGreaterEqual(int(np.sum(counts)), 6)
+        first_three = []
+        for _ in range(3):
+            arm = policy.select_arm()
+            first_three.append(arm)
+            policy.update(arm, 0.0)
+        self.assertEqual(len(set(first_three)), 3)
+        self.assertEqual(int(policy.phase_idx), 1)
+
+    def test_arm_relabeling_does_not_change_physical_sample_sequence(self) -> None:
+        # Identical physical arms and identical per-arm noise streams. Pure
+        # relabeling must not change the finite-horizon sampling schedule.
+        reference = make_realizable_env(k=12, d=3, sigma=0.25,
+                                        permute_arms=False, seed=197)
+        noise = np.random.default_rng(839).normal(0.0, 0.25, size=(12, 1500))
+        physical_histories = []
+        for perm_seed in (0, 1, 2):
+            permutation = np.random.default_rng(perm_seed).permutation(12)
+            env = LinearBanditEnvironment(
+                name="permuted", features=reference.features[permutation],
+                theta_star=reference.theta_star,
+                misspecification=reference.misspecification[permutation],
+                sigma=0.25,
+            )
+            policy = PhasedEliminationBandit(env.features, sigma=0.25,
+                                            phase_scale=0.12, eps_init=0.25,
+                                            elimination_multiplier=2.0)
+            pulls = np.zeros(12, dtype=int)
+            physical_actions = []
+            for _ in range(750):
+                arm = policy.select_arm()
+                physical = int(permutation[arm])
+                physical_actions.append(physical)
+                reward = float(reference.true_means[physical]
+                               + noise[physical, pulls[physical]])
+                pulls[physical] += 1
+                policy.update(arm, reward)
+            physical_histories.append(physical_actions)
+        self.assertEqual(physical_histories[0], physical_histories[1])
+        self.assertEqual(physical_histories[0], physical_histories[2])
+
     def test_phase_counts_reset_and_global_counts_persist(self) -> None:
         features = np.eye(2, dtype=float)
         learner = PhasedEliminationBandit(
@@ -120,6 +168,9 @@ class TestDetectionScope(unittest.TestCase):
 
 
 class TestExperimentIntegrity(unittest.TestCase):
+    def test_plotting_source_participates_in_provenance(self) -> None:
+        self.assertIn("experiments/plot_results.py", _SOURCE_FILES)
+
     def test_rho_sweep_obeys_bounded_gap(self) -> None:
         for rho in (0.0, 0.05, 0.30, 0.60):
             env = make_gap_adjusted_env(k=40, d=5, rho=rho)
